@@ -1,0 +1,14 @@
+services:
+  office:
+    build: .
+    ports:
+      - "127.0.0.1:4780:4780"
+    environment:
+      WORKSPACE_ROOT: ${WORKSPACE_ROOT:-${HOME}/orca}
+      ASK_WAIT_MS: ${ASK_WAIT_MS:-295000}
+    volumes:
+      - office-data:/data
+      - ${WORKSPACE_ROOT:-${HOME}/orca}:${WORKSPACE_ROOT:-${HOME}/orca}:ro
+    restart: unless-stopped
+volumes:
+  office-data:

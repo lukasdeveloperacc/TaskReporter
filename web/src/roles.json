@@ -1,0 +1,32 @@
+{
+  "departments": [
+    { "key": "대표실", "name": "대표실", "color": "#bf7839", "x": 1, "y": 1, "w": 8, "h": 6 },
+    { "key": "부장석", "name": "부장석", "color": "#796044", "x": 10, "y": 1, "w": 8, "h": 6 },
+    { "key": "회의실", "name": "회의실", "color": "#647b70", "x": 19, "y": 1, "w": 11, "h": 6 },
+    { "key": "백엔드팀", "name": "백엔드팀", "color": "#427b8b", "x": 1, "y": 8, "w": 9, "h": 7 },
+    { "key": "프론트엔드팀", "name": "프론트엔드팀", "color": "#49866d", "x": 11, "y": 8, "w": 9, "h": 7 },
+    { "key": "디자인팀", "name": "디자인팀", "color": "#a96368", "x": 21, "y": 8, "w": 9, "h": 7 },
+    { "key": "문서팀", "name": "문서팀", "color": "#9a7951", "x": 1, "y": 17, "w": 9, "h": 7 },
+    { "key": "감사팀", "name": "감사팀", "color": "#786d9b", "x": 11, "y": 17, "w": 9, "h": 7 },
+    { "key": "QA팀", "name": "QA팀", "color": "#b07843", "x": 21, "y": 17, "w": 9, "h": 7 },
+    { "key": "임시 자리", "name": "임시 자리", "color": "#6a7370", "x": 11, "y": 26, "w": 9, "h": 6 }
+  ],
+  "owners": [
+    { "match": "leader", "department": "부장석" },
+    { "match": "backend-*", "department": "백엔드팀" },
+    { "match": "frontend-*", "department": "프론트엔드팀" },
+    { "match": "docs-*", "department": "문서팀" },
+    { "match": "Planner", "department": "회의실" },
+    { "match": "Architect", "department": "회의실" },
+    { "match": "Critic", "department": "회의실" },
+    { "match": "Karpathy Agent", "department": "감사팀" },
+    { "match": "Ponytail Agent", "department": "감사팀" },
+    { "match": "Impeccable Agent", "department": "디자인팀" },
+    { "match": "E2E Agent", "department": "QA팀" }
+  ],
+  "ranks": [
+    { "match": "haiku", "rank": "신입사원" },
+    { "match": "sonnet", "rank": "대리" },
+    { "match": "opus", "rank": "과장" }
+  ]
+}

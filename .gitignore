@@ -1,0 +1,10 @@
+.omc*
+.omx*
+data/
+.env*.local
+inprogress/
+node_modules/
+dist/
+data/
+.env
+.impeccable/
