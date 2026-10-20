@@ -12,6 +12,8 @@ Claude Code 터미널에서 basic-team을 실행하는 사용자가 옆 모니�
 4. 사용자가 에디터에서 저장소 Markdown을 바꾸면 공지가 나타난다. 다음 report의 diff를 확인한 리더가 재계획 여부를 묻는다. 앱에서는 문서를 읽기만 한다.
 5. 완료·중단 run은 업무 일지와 마지막 스냅샷으로 남는다. 30분 무응답은 자리 비움으로 표시하고 새 report로 복귀한다.
 
+직접 둘러보기는 구현·자동 검증·실제 브라우저 검증과 독립 리뷰를 마쳤다. 기존 대표를 방향키·WASD와 화면 버튼으로 움직여 실제 직원의 보고를 살펴보고 엘리베이터로 실제 프로젝트 층을 이동하는 선택 기능이다. 상세 동작과 완료 기준은 [진행 보고와 사무실](requirements/progress-office.md)에 둔다.
+
 ## 제품 경계
 
 배포는 localhost 전용 Docker 컨테이너 하나, Node 프로세스 하나와 SQLite named volume을 사용한다. 기본 `~/orca`를 동일 절대 경로로 읽기 전용 마운트한다. 밖의 프로젝트도 층은 만들지만 문서 열람·변경 감지는 제공하지 않는다. 원본 basic-team은 수정하지 않으며 Office 도구가 없거나 연결이 끊기면 기존 progress.py HTML로 폴백한다.
@@ -28,4 +30,4 @@ Claude Code 터미널에서 basic-team을 실행하는 사용자가 옆 모니�
 - [결재와 실행 연동](requirements/decisions-integration.md): ask 대기·재개, 터미널 답변, 원본 basic-team과 HTML 폴백.
 - [기획서 열람과 변경](requirements/documents.md): 경로 경계, 변경 공지, diff와 재계획.
 
-기술 구성과 실행 명령은 [시스템 아키텍처](1-SYSTEM-ARCHITECTURE.md), 화면 원칙은 [디자인](2-DESIGN.md), 저장 정책은 [데이터베이스](3-DATABASE.md), 사용자 여정은 [사용자 흐름](4-USERFLOW.md)에서 관리한다. 구현·검증 경과는 [변경 기록](changes/001-office-team-reporter.md)에 남긴다.
+기술 구성과 실행 명령은 [시스템 아키텍처](1-SYSTEM-ARCHITECTURE.md), 화면 원칙은 [디자인](2-DESIGN.md), 저장 정책은 [데이터베이스](3-DATABASE.md), 사용자 여정은 [사용자 흐름](4-USERFLOW.md)에서 관리한다. 기존 구현·검증 경과는 [변경 기록 001](changes/001-office-team-reporter.md), 직접 둘러보기 작업은 [변경 기록 002](changes/002-keyboard-visitor.md)에 남긴다.

@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import type { AskView, RunView } from '../../shared/contract.ts'
 import { buildOffice, characterFrame, diffScenes, fitOfficeScale, OFFICE_HEIGHT, OFFICE_WIDTH, seatPosition, type Scene } from './office.ts'
+import { ELEVATOR_RECT, moveVisitor, nearestInteraction, roomGeometry, visitorSpriteBounds, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
 import roles from './roles.json' with { type: 'json' }
 import './office.css'
 
-export type OfficeProps = { run: RunView; asks: AskView[]; now: number; onOpenAsk: (id: string) => void }
+export type OfficeFloor = { projectPath: string; name: string; floorNumber: number; status: string; disabled: boolean; current: boolean }
+type VisitorPanel = { kind: 'elevator' } | { kind: 'employee'; owner: string }
+export type OfficeProps = { run: RunView; asks: AskView[]; now: number; onOpenAsk: (id: string) => void; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void; floors?: OfficeFloor[]; onVisitProject?: (path: string) => boolean | void; interactionBlocked?: boolean }
 const departmentByKey = new Map(roles.departments.map((department) => [department.key, department]))
 const TILE = 48
 const MAX_SCENES = 40
@@ -15,7 +18,7 @@ function Sprite({ frame, className = '' }: { frame: [number, number]; className?
   return <span aria-hidden="true" className={`sprite ${className}`} style={{ backgroundPosition: `${-col * 51}px ${-row * 51}px` }} />
 }
 
-export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
+export function Office({ run, asks, now, onOpenAsk, visitorEnabled = false, onVisitorEnabledChange, floors = [], onVisitProject, interactionBlocked = false }: OfficeProps) {
   const office = useMemo(() => buildOffice(run, now), [run, now])
   const previousRun = useRef<RunView | null>(null)
   const [scene, setScene] = useState<Scene | null>(null)
@@ -80,8 +83,53 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
   const overviewTriggerRef = useRef<HTMLButtonElement>(null)
   const restoreTriggerFocus = useRef(false)
   const [overviewOpen, setOverviewOpen] = useState(false)
+  const [visitorPoint, setVisitorPoint] = useState<Point>(VISITOR_SPAWN)
+  const [visitorPaused, setVisitorPaused] = useState(false)
+  const [visitorPanel, setVisitorPanel] = useState<VisitorPanel | null>(null)
+  const [visitorMessage, setVisitorMessage] = useState('')
+  const [visitorMapHeight, setVisitorMapHeight] = useState<number | null>(null)
+  const visitorFocusRef = useRef<HTMLButtonElement>(null)
+  const visitorPanelFocusRef = useRef<HTMLButtonElement>(null)
+  const focusFrameRef = useRef<number | undefined>(undefined)
   const [fitScale, setFitScale] = useState(1)
   const roomRefs = useRef(new Map<string, HTMLElement>())
+  const focusAllowedRef = useRef(false)
+  focusAllowedRef.current = visitorEnabled && !overviewOpen && !interactionBlocked && visitorPanel === null
+  const focusMap = () => {
+    if (focusFrameRef.current !== undefined) cancelAnimationFrame(focusFrameRef.current)
+    focusFrameRef.current = requestAnimationFrame(() => {
+      focusFrameRef.current = undefined
+      if (focusAllowedRef.current) floorRef.current?.focus({ preventScroll: true })
+    })
+  }
+  useEffect(() => () => { if (focusFrameRef.current !== undefined) cancelAnimationFrame(focusFrameRef.current) }, [])
+  useLayoutEffect(() => {
+    if (!visitorEnabled || overviewOpen) { setVisitorMapHeight(null); return }
+    const measure = () => {
+      const floor = floorRef.current
+      if (!floor) return
+      const available = window.innerHeight - floor.getBoundingClientRect().top - 8
+      setVisitorMapHeight(available > 0 ? available : Math.min(240, Math.max(0, window.innerHeight - 8)))
+    }
+    const measureOnPageScroll = (event: Event) => {
+      const floor = floorRef.current
+      const target = event.target
+      if (floor && target instanceof Node && (target === floor || floor.contains(target))) return
+      measure()
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    window.addEventListener('scroll', measureOnPageScroll, true)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    if (floorRef.current) observer?.observe(floorRef.current)
+    const panel = floorRef.current?.parentElement
+    if (panel) observer?.observe(panel)
+    return () => {
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('scroll', measureOnPageScroll, true)
+      observer?.disconnect()
+    }
+  }, [visitorEnabled, overviewOpen, run.id])
   const jumpToRoom = (key: string) => {
     const floor = floorRef.current
     const room = roomRefs.current.get(key)
@@ -93,15 +141,21 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
   }
   const openAsk = (id: string) => {
     restoreTriggerFocus.current = false
+    if (visitorEnabled) setVisitorPaused(true)
+    setVisitorPanel(null)
     setOverviewOpen(false)
     onOpenAsk(id)
   }
   const toggleOverview = () => {
     if (overviewOpen) {
-      restoreTriggerFocus.current = true
+      restoreTriggerFocus.current = !interactionBlocked
+      if (visitorEnabled) setVisitorPaused(true)
+      setVisitorPanel(null)
       setOverviewOpen(false)
     } else {
-      setFitScale(fitOfficeScale(window.innerWidth, window.innerHeight, toolbarRef.current?.getBoundingClientRect().height ?? 52))
+      if (visitorEnabled) setVisitorPaused(true)
+      setVisitorPanel(null)
+      floorRef.current?.scrollTo({ left: 0, top: 0, behavior: 'instant' })
       setOverviewOpen(true)
     }
   }
@@ -116,7 +170,12 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
     }
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const measure = () => setFitScale(fitOfficeScale(window.innerWidth, window.innerHeight, toolbarRef.current?.getBoundingClientRect().height ?? 52))
+    const measure = () => {
+      const floor = floorRef.current
+      const width = floor?.clientWidth ?? 0
+      const height = floor?.clientHeight ?? 0
+      setFitScale(width && height ? Math.min(1, width / OFFICE_WIDTH, height / OFFICE_HEIGHT) : fitOfficeScale(window.innerWidth, window.innerHeight, toolbarRef.current?.getBoundingClientRect().height ?? 52))
+    }
     measure()
     window.addEventListener('resize', measure)
     overviewTriggerRef.current?.focus()
@@ -126,10 +185,92 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
     }
   }, [overviewOpen])
 
+  const geometry = useMemo(() => roomGeometry(roles.departments), [])
+  const activeVisitors = visitorEnabled && !visitorPaused && !overviewOpen && !interactionBlocked && visitorPanel === null
+  const elevatorOpen = visitorPanel?.kind === 'elevator'
+  const inspectedOwner = visitorPanel?.kind === 'employee' ? visitorPanel.owner : null
+  const employeeAnchors = office.employees.filter((employee) => employee.state !== 'gone').map((employee) => {
+    const seat = seatPosition(departmentByKey.get(employee.department)!, employee.deskIndex)
+    return { employee, point: { x: seat.x * TILE, y: seat.y * TILE } }
+  })
+  const nearestEmployee = visitorEnabled ? nearestInteraction(visitorPoint, employeeAnchors.map(({ employee, point }) => ({ name: employee.name, point, employee }))) : null
+  const elevatorTarget = { name: '엘리베이터', point: { x: ELEVATOR_RECT.x + ELEVATOR_RECT.width / 2, y: ELEVATOR_RECT.y + ELEVATOR_RECT.height } }
+  const nearElevator = visitorEnabled && nearestInteraction(visitorPoint, [elevatorTarget]) !== null
+  const currentEmployee = nearestEmployee?.employee
+  const currentInteraction = nearElevator ? 'elevator' : currentEmployee?.name ?? null
+  const visitorCanInteract = visitorEnabled && !visitorPaused && !overviewOpen && !interactionBlocked && visitorPanel === null && currentInteraction !== null
+  const move = (direction: Direction) => {
+    if (!activeVisitors) return
+    setVisitorPoint((point) => moveVisitor(point, direction, geometry))
+    setVisitorMessage('')
+  }
+  const interact = () => {
+    if (!visitorCanInteract) return
+    if (nearElevator) { setVisitorPaused(true); setVisitorPanel({ kind: 'elevator' }); return }
+    if (currentEmployee) { setVisitorPaused(true); setVisitorPanel({ kind: 'employee', owner: currentEmployee.name }); return }
+  }
+  const closeVisitorPanel = (restore = true) => {
+    setVisitorPanel(null); setVisitorPaused(true)
+    if (restore && !overviewOpen && !interactionBlocked) focusMap()
+  }
+  const onMapKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing || !visitorEnabled || interactionBlocked || overviewOpen) return
+    const keyDirections: Record<string, Direction> = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' }
+    const direction = keyDirections[event.code] ?? (event.code ? undefined : ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' } as Record<string, Direction>)[event.key])
+    if (direction) { if (!visitorPaused && !visitorPanel) { event.preventDefault(); move(direction) }; return }
+    if (event.key === 'Escape' && visitorPanel) { event.preventDefault(); closeVisitorPanel(false); return }
+    if (event.key === 'Escape' && !visitorPaused) { event.preventDefault(); setVisitorPaused(true); return }
+    if ((event.key === 'Enter' || event.key.toLowerCase() === 'e') && visitorCanInteract && !event.repeat) { event.preventDefault(); interact() }
+  }
+
+  useEffect(() => {
+    if (!visitorEnabled) { setVisitorPaused(false); setVisitorPanel(null); return }
+    setVisitorPoint(VISITOR_SPAWN)
+    setVisitorPaused(false)
+    setVisitorPanel(null)
+    focusMap()
+  }, [run.id, visitorEnabled])
+  useEffect(() => {
+    if (!visitorEnabled || !elevatorOpen) return
+    visitorFocusRef.current?.focus({ preventScroll: true })
+  }, [elevatorOpen, visitorEnabled])
+  useEffect(() => {
+    if (!activeVisitors) return
+    const frame = requestAnimationFrame(() => {
+      const floor = floorRef.current
+      if (!floor) return
+      const bounds = visitorSpriteBounds(visitorPoint)
+      floor.scrollTo({ left: Math.max(0, Math.min(bounds.left + bounds.width / 2 - floor.clientWidth / 2, floor.scrollWidth - floor.clientWidth)), top: Math.max(0, Math.min(bounds.top + bounds.height / 2 - floor.clientHeight / 2, floor.scrollHeight - floor.clientHeight)), behavior: 'instant' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeVisitors, visitorPoint, visitorMapHeight, run.id])
+  useEffect(() => {
+    if (!interactionBlocked) return
+    setVisitorPanel(null)
+    setVisitorPaused(true)
+    restoreTriggerFocus.current = false
+    if (overviewOpen) setOverviewOpen(false)
+  }, [interactionBlocked, visitorPanel, overviewOpen])
+  useEffect(() => {
+    if (!activeVisitors) return
+    const recenter = () => {
+      const floor = floorRef.current
+      if (!floor) return
+      const bounds = visitorSpriteBounds(visitorPoint)
+      floor.scrollTo({ left: Math.max(0, Math.min(bounds.left + bounds.width / 2 - floor.clientWidth / 2, floor.scrollWidth - floor.clientWidth)), top: Math.max(0, Math.min(bounds.top + bounds.height / 2 - floor.clientHeight / 2, floor.scrollHeight - floor.clientHeight)), behavior: 'instant' })
+    }
+    window.addEventListener('resize', recenter)
+    return () => window.removeEventListener('resize', recenter)
+  }, [activeVisitors, visitorPoint, visitorMapHeight])
+  useEffect(() => {
+    if (visitorEnabled && inspectedOwner !== null) visitorPanelFocusRef.current?.focus({ preventScroll: true })
+  }, [visitorEnabled, inspectedOwner])
+
   const handleDialogKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      restoreTriggerFocus.current = true
+      restoreTriggerFocus.current = !interactionBlocked
+      if (visitorEnabled) setVisitorPaused(true)
       setOverviewOpen(false)
     } else if (event.key === 'Tab') {
       const dialog = event.currentTarget
@@ -150,18 +291,26 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
   return <section className={`office-panel${overviewOpen ? ' office-panel--expanded' : ''}`} aria-label={`${run.title} 사무실`} role={overviewOpen ? 'dialog' : undefined} aria-modal={overviewOpen || undefined} onKeyDown={overviewOpen ? handleDialogKeyDown : undefined}>
     <nav ref={toolbarRef} className="office-department-nav" aria-label="사무실 구역 바로가기">
       <button ref={overviewTriggerRef} type="button" className="office-overview-toggle" onClick={toggleOverview}>{overviewOpen ? '전체 보기 닫기' : '전체 보기'}</button>
+      {onVisitorEnabledChange && <button type="button" onClick={() => { setVisitorPoint(VISITOR_SPAWN); setVisitorPaused(false); onVisitorEnabledChange(!visitorEnabled) }}>{visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}
       {roles.departments.map((department, index) => <button key={department.key} type="button" aria-controls={`office-room-${index}`} onClick={() => jumpToRoom(department.key)}>{department.name}</button>)}
     </nav>
-    <div id="office-floor-scroll" ref={floorRef} className={`office-scroll${overviewOpen ? ' office-scroll--overview' : ''}`} role="region" aria-label={`${run.title} 사무실 바닥`} tabIndex={0}>
+    {visitorEnabled && !overviewOpen && <div className="visitor-controls" aria-label="둘러보기 조작">
+      <span>방향키 또는 WASD로 이동 · 문 앞에서 E/Enter 또는 살펴보기</span>
+      <div className="visitor-directions"><button aria-label="위로 이동" onClick={() => move('up')} disabled={!activeVisitors}>↑</button><button aria-label="왼쪽으로 이동" onClick={() => move('left')} disabled={!activeVisitors}>←</button><button aria-label="아래로 이동" onClick={() => move('down')} disabled={!activeVisitors}>↓</button><button aria-label="오른쪽으로 이동" onClick={() => move('right')} disabled={!activeVisitors}>→</button></div>
+      <button type="button" onClick={interact} disabled={!visitorCanInteract}>살펴보기 · {currentInteraction === 'elevator' ? '엘리베이터' : currentInteraction ?? '주변을 둘러보세요'}</button>
+      <button type="button" onClick={() => { if (overviewOpen) return; const resume = visitorPaused; setVisitorPaused(!visitorPaused); if (resume) focusMap() }} disabled={visitorPanel !== null || interactionBlocked || overviewOpen}>{visitorPaused ? '둘러보기 재개' : '잠시 멈춤'}</button>
+      {visitorMessage && <span role="status">{visitorMessage}</span>}
+    </div>}
+    <div id="office-floor-scroll" ref={floorRef} className={`office-scroll${overviewOpen ? ' office-scroll--overview' : ''}${visitorEnabled ? ' office-scroll--visitor' : ''}`} style={visitorEnabled && !overviewOpen && visitorMapHeight !== null ? { maxHeight: visitorMapHeight } : undefined} role="region" aria-label={`${run.title} 사무실 바닥`} tabIndex={0} onKeyDown={onMapKeyDown}>
     <div className="office-map-stage" style={stageStyle} data-fit-scale={overviewOpen ? fitScale : 1}>
     <div className={`office-scene ${run.ended_at ? 'office-scene--off' : ''}`} data-run-id={run.id} style={mapStyle}>
-      <div className="office-entry"><span>출입구</span></div>
-      {roles.departments.map((department, index) => <section key={department.key} id={`office-room-${index}`} ref={(element) => { if (element) roomRefs.current.set(department.key, element); else roomRefs.current.delete(department.key) }} className="office-room" aria-label={department.name} style={{ left: department.x * TILE, top: department.y * TILE, width: department.w * TILE, height: department.h * TILE, '--room-color': department.color } as CSSProperties}>
+      <div className="office-elevator" style={{ left: ELEVATOR_RECT.x, top: ELEVATOR_RECT.y, width: ELEVATOR_RECT.width, height: ELEVATOR_RECT.height }}><span>엘리베이터</span><small>층간 이동</small></div>
+      {roles.departments.map((department, index) => { const room = geometry.rooms[index]; return <section key={department.key} id={`office-room-${index}`} ref={(element) => { if (element) roomRefs.current.set(department.key, element); else roomRefs.current.delete(department.key) }} className="office-room" aria-label={department.name} style={{ left: room.x, top: room.y, width: room.width, height: room.height, '--room-color': department.color, '--door-left': `${room.door.from.x - room.x}px`, '--door-width': `${room.door.to.x - room.door.from.x}px` } as CSSProperties}>
         <h3>{department.name}</h3>
         {department.key === '대표실' && asks.filter((ask) => ask.run_id === run.id && ask.status === 'pending').map((ask) => <button className="office-ask" key={ask.id} onClick={() => openAsk(ask.id)}><span>결재 서류</span><strong>{ask.question}</strong></button>)}
         {department.key === '대표실' && <span className="office-plant" aria-hidden="true" />}
-      </section>)}
-      <div className="office-representative" data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" style={{ left: 2 * TILE, top: 4 * TILE }}>
+      </section>})}
+      <div className="office-representative" data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" style={visitorEnabled ? visitorSpriteBounds(visitorPoint) : { left: 2 * TILE, top: 4 * TILE }}>
         <Sprite frame={characterFrame('대표 · 나')} className="office-person" />
         <span className="office-name">대표 · 나</span>
       </div>
@@ -178,10 +327,11 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
         const returning = scene?.type === 'return' && (scene.from === employee.name || returnOwner === employee.name)
         const travelTarget = delivery ? deliveryAudit : returning && returnOwner ? deskPositions.get(returnOwner) ?? position : position
         const travelsThisScene = delivery || returning
-        const at = walkers.has(employee.name)
+        const at = visitorEnabled ? { x: position.x - 26, y: position.y - 48 }
+          : walkers.has(employee.name)
           ? { x: 13 * TILE + (office.employees.findIndex(({ name }) => name === employee.name) % 6) * 56, y: 13 * TILE + Math.floor(office.employees.findIndex(({ name }) => name === employee.name) / 6) * 56 }
           : travelsThisScene && sceneTraveling ? travelTarget : isWorking || employee.state === 'away' || travelsThisScene ? position : parked
-        return <div key={employee.name} className={`office-employee office-employee--${employee.state}`} data-employee={employee.name} data-state={employee.state} style={{ left: at.x, top: at.y, '--employee-color': desk.color, '--walk-key': motionKey } as CSSProperties}>
+        return <div key={employee.name} className={`office-employee office-employee--${employee.state}${visitorEnabled ? ' office-employee--visitor' : ''}`} data-employee={employee.name} data-state={employee.state} style={{ left: at.x, top: at.y, '--employee-color': desk.color, '--walk-key': motionKey } as CSSProperties}>
           <Sprite frame={employee.frame} className="office-person" />
           <span className="office-bubble office-bubble--staff" tabIndex={employee.state === 'gone' ? undefined : 0} title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px`, maxHeight: 120 } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : `${employee.name}${employee.rank ? ` · ${employee.rank}` : ''}`}</span>
@@ -210,8 +360,19 @@ export function Office({ run, asks, now, onOpenAsk }: OfficeProps) {
         return <div key={`${review.round}-${review.reviewer}`} className={`office-stamp office-stamp--${verdict}`} style={{ left: desk.x + 8, top: desk.y - 35 }} data-reviewer={review.reviewer}>{label} <small>R{review.round}{count > 1 ? ` · ${count}회` : ''}</small></div>
       })}
       {scene?.type === 'stamp' && <span className="office-scene-live" role="status">{scene.reviewer} R{scene.round} {scene.verdict === 'CHANGES_REQUIRED' ? '반려 도장' : '승인 도장'}</span>}
+      {visitorEnabled && <span className="office-scene-live" role="status">{visitorPaused ? '둘러보기 일시정지' : nearElevator ? '엘리베이터 근처' : currentEmployee ? `${currentEmployee.name} 근처` : ''}</span>}
     </div>
     </div>
     </div>
+    {visitorEnabled && elevatorOpen && <div className="visitor-picker" role="dialog" aria-modal="true" aria-label="다른 프로젝트 층 선택" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeVisitorPanel() }; if (event.key === 'Tab') { const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled])')]; const first = buttons[0], last = buttons.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() } } }}>
+      <h2>어느 층으로 갈까요?</h2><button ref={visitorFocusRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
+      {visitorMessage && <p role="alert">{visitorMessage}</p>}
+      {floors.map((floor) => <button key={floor.projectPath} type="button" disabled={floor.disabled || floor.current} onClick={() => { const moved = onVisitProject?.(floor.projectPath); if (moved === false) setVisitorMessage('해당 프로젝트 층을 사용할 수 없습니다. 최신 보고 상태를 확인해 주세요.'); else setVisitorPanel(null) }}>{floor.floorNumber}층 · {floor.name} · {floor.status}{floor.current ? ' · 현재 층' : ''}</button>)}
+      <button type="button" onClick={() => { onVisitorEnabledChange?.(false); setVisitorPanel(null); window.location.hash = '#/' }}>빌딩 로비로 돌아가기</button>
+    </div>}
+    {visitorEnabled && inspectedOwner !== null && <aside className="visitor-inspector" aria-label="직원 업무 살펴보기" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeVisitorPanel() } }}>
+      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.state === 'away' ? '자리 비움' : selected.state === 'gone' ? '업무 종료' : '근무 중'}</p>{selected.task ? <><p>작업 · {selected.task.title}</p><p>작업 ID · {selected.task.id}</p><p>경과 시간 · {selected.task.elapsedMin}분</p></> : <p>현재 진행 중인 작업이 없습니다.</p>}<p>모델 · {selected.model ?? '미보고'}</p><p>노력 · {selected.effort ?? '미보고'}</p></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
+      <button ref={visitorPanelFocusRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
+    </aside>}
   </section>
 }

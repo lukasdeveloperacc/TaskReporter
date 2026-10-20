@@ -16,6 +16,8 @@ Node 24 프로세스 하나가 Express 5, MCP SDK의 Streamable HTTP, SQLite와 
 | [web/src/Office.tsx](../web/src/Office.tsx), [Lobby.tsx](../web/src/Lobby.tsx), [Panels.tsx](../web/src/Panels.tsx) | 사무실·빌딩·결재·기획서·업무 일지 |
 | [skills/office-basic-team/SKILL.md](../skills/office-basic-team/SKILL.md) | 설치된 원본 basic-team 실행 절차와 Office 보고·HTML 폴백 연결 |
 
+직접 둘러보기의 프런트엔드 확장을 구현했다. [visitor.ts](../web/src/visitor.ts)는 발 위치 기반 이동·벽·출입구·근접 대상 계산을, [floors.ts](../web/src/floors.ts)는 로비와 엘리베이터가 공유하는 층 정렬을 맡는다. App은 둘러보기 의도·실제 프로젝트 경로 전환을, Office는 위치·일시정지·직원 상세·엘리베이터·지도 카메라와 포커스를 관리한다. 실제 브라우저 검증과 독립 리뷰 결과는 [변경 기록 002](changes/002-keyboard-visitor.md)에 둔다.
+
 ## 데이터 흐름과 외부 경계
 
 터미널의 office-basic-team → `POST /mcp`의 report → 검증·병합 → SQLite 저장 → SSE `changed` → 화면이 `/api/state`를 다시 읽는다. ask는 SQLite에 질문을 저장하고 HTTP 호출을 대기시킨다. 브라우저 답변은 저장 후 대기 호출에 전달된다. 호출 취소·서버 재시작 뒤에도 질문은 DB에 남고 같은 ask_id로 재개한다. 상세 계약은 [결재 요구사항](requirements/decisions-integration.md)에 있다.

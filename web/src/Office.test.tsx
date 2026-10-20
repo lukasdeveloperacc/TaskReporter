@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
@@ -163,6 +164,181 @@ describe('Office scene controls and coordinates', () => {
     expect(document.activeElement).toBe(floor)
     fireEvent.keyDown(floor!, { key: 'Tab' })
     expect(document.activeElement).toBe(toggle)
+  })
+
+  it('moves only from a focused visitor map and opens the nearby elevator', () => {
+    const onVisitorEnabledChange = vi.fn()
+    const { rerender } = render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} onVisitorEnabledChange={onVisitorEnabledChange} floors={[{ projectPath: '/workspace/other', name: 'other', floorNumber: 1, status: '근무 중', disabled: false, current: false }]} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    expect(onVisitorEnabledChange).toHaveBeenCalledWith(true)
+    rerender(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled onVisitorEnabledChange={onVisitorEnabledChange} floors={[{ projectPath: '/workspace/other', name: 'other', floorNumber: 1, status: '근무 중', disabled: false, current: false }]} />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    floor.focus()
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect((screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top).toBe('1368px')
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /other/ })).toBeTruthy()
+  })
+
+  it('keeps controls paused after closing an inspection and resumes by explicit action', () => {
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled onVisitorEnabledChange={() => {}} />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    floor.focus()
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    const before = (screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect((screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top).toBe(before)
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect((screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top).not.toBe(before)
+  })
+
+  it('ignores modified, composing, descendant and repeated interaction keys while keeping touch steps available', () => {
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled onVisitorEnabledChange={() => {}} />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    floor.focus()
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const initial = avatar.style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp', ctrlKey: true })
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp', isComposing: true })
+    expect(avatar.style.top).toBe(initial)
+    const child = floor.querySelector('.office-map-stage')!
+    fireEvent.keyDown(child, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).toBe(initial)
+    fireEvent.click(screen.getByRole('button', { name: '아래로 이동' }))
+    expect(avatar.style.top).toBe('1416px')
+    const handled = fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter', repeat: true })
+    expect(handled).toBe(true)
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+  })
+
+  it('bounds the visitor floor to the visible viewport at desktop and mobile heights', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      return new DOMRect(0, this.id === 'office-floor-scroll' ? 491 : 0, 390, 300)
+    })
+    const { rerender } = render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' }) as HTMLElement
+    expect(Number.parseFloat(floor.style.maxHeight)).toBe(401)
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 })
+    bounds.mockImplementation(function () { return new DOMRect(0, this.id === 'office-floor-scroll' ? 660 : 0, 390, 300) })
+    act(() => { window.dispatchEvent(new Event('resize')) })
+    expect(Number.parseFloat(floor.style.maxHeight)).toBe(176)
+    expect(Number.parseFloat(floor.style.maxHeight) + 660).toBeLessThanOrEqual(window.innerHeight)
+    rerender(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    bounds.mockRestore()
+  })
+
+  it('recovers a usable map height after the page scrolls its floor into view', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+    let floorTop = 574
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      return new DOMRect(0, this.id === 'office-floor-scroll' ? floorTop : 0, 390, 300)
+    })
+    const { rerender } = render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' }) as HTMLElement
+    expect(Number.parseFloat(floor.style.maxHeight)).toBe(240)
+    floorTop = 19
+    act(() => { window.dispatchEvent(new Event('scroll')) })
+    expect(Number.parseFloat(floor.style.maxHeight)).toBe(473)
+    rerender(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    bounds.mockRestore()
+  })
+
+  it('measures the arrived floor before recentering a fresh destination run', async () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+    let floorTop = 100
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      return new DOMRect(0, this.id === 'office-floor-scroll' ? floorTop : 0, 400, 300)
+    })
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    const { rerender } = render(<Office run={makeRun([], { id: 'floor-alpha' })} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' }) as HTMLElement
+    Object.defineProperty(floor, 'clientWidth', { configurable: true, get: () => 400 })
+    Object.defineProperty(floor, 'clientHeight', { configurable: true, get: () => Math.min(702, Number.parseFloat(floor.style.maxHeight) || 702) })
+    Object.defineProperty(floor, 'scrollWidth', { configurable: true, get: () => 1536 })
+    Object.defineProperty(floor, 'scrollHeight', { configurable: true, get: () => 1600 })
+    floorTop = 492
+    rerender(<Office run={makeRun([], { id: 'floor-beta' })} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled />)
+    expect(Number.parseFloat(floor.style.maxHeight)).toBe(400)
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ top: 1200, behavior: 'instant' })))
+    bounds.mockRestore()
+  })
+
+  it('keeps visitor map sizing immediate under reduced-motion global timing rules', () => {
+    const css = readFileSync('web/src/office.css', 'utf8')
+    const globalCss = readFileSync('web/src/app.css', 'utf8')
+    expect(globalCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?transition-duration:\s*\.01ms\s*!important/)
+    expect(css).toMatch(/\.office-scroll--visitor\s*\{[^}]*transition:\s*none;/)
+  })
+
+  it('fits overview without visitor controls and keeps movement paused after every close path', async () => {
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    const { rerender } = render(<><button type="button">Approval dialog</button><Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' }) as HTMLElement
+    Object.defineProperty(floor, 'clientWidth', { configurable: true, value: 900 })
+    Object.defineProperty(floor, 'clientHeight', { configurable: true, value: 700 })
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' })
+    scrollTo.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(document.querySelector('.visitor-controls')).toBeNull()
+    expect(Number((document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale)).toBeCloseTo(700 / 1600)
+    const toggle = screen.getByRole('button', { name: '전체 보기 닫기' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'QA팀' }), { key: 'Escape' })
+    expect(document.activeElement).toBe(toggle)
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const before = avatar.style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).toBe(before)
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    await waitFor(() => expect(document.activeElement).toBe(floor))
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(before)
+    const moved = avatar.style.top
+
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    const approval = screen.getByRole('button', { name: 'Approval dialog' })
+    approval.focus()
+    rerender(<><button type="button">Approval dialog</button><Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled interactionBlocked /></>)
+    expect(screen.queryByRole('dialog', { name: '관제실 확인 사무실' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Approval dialog' }))
+    rerender(<><button type="button">Approval dialog</button><Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
+    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    expect(avatar.style.top).toBe(moved)
+  })
+
+  it('recenters on resize only while visitor movement is active', () => {
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    const { rerender } = render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    Object.defineProperty(floor, 'clientWidth', { configurable: true, value: 200 })
+    Object.defineProperty(floor, 'clientHeight', { configurable: true, value: 150 })
+    scrollTo.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    scrollTo.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    scrollTo.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).not.toHaveBeenCalled()
+    rerender(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled interactionBlocked />)
+    scrollTo.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).not.toHaveBeenCalled()
   })
 })
 

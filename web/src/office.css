@@ -50,6 +50,7 @@
   scrollbar-color: #8a9a8e #e6e2d6;
   scrollbar-width: thin;
 }
+.office-scroll--visitor { scroll-behavior: auto; transition: none; }
 .office-scroll--overview {
   display: grid;
   flex: 1 1 auto;
@@ -81,6 +82,7 @@
   position: absolute;
   box-sizing: border-box;
   border: 5px solid #67533b;
+  border-bottom-color: transparent;
   background-color: #c7ad7a;
   background-image:
     linear-gradient(90deg, rgb(114 78 42 / 10%) 1px, transparent 1px),
@@ -88,6 +90,16 @@
     linear-gradient(90deg, #d6c091 50%, #d0b887 50%);
   background-size: 48px 48px, 48px 48px, 96px 96px;
   box-shadow: 0 4px 9px rgb(37 40 30 / 17%);
+}
+.office-room::after {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: -5px;
+  left: 0;
+  height: 5px;
+  background: linear-gradient(to right, #67533b var(--door-left), transparent var(--door-left), transparent calc(var(--door-left) + var(--door-width)), #67533b calc(var(--door-left) + var(--door-width)));
+  content: '';
 }
 .office-room::before {
   position: absolute;
@@ -123,6 +135,21 @@
   color: #fff8e8;
   font-size: 13px;
 }
+.office-elevator {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  border: 4px solid #67533b;
+  background: #356b69;
+  color: #fffdf6;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 4px #d7c093, 0 3px 8px rgb(37 40 30 / 24%);
+}
+.office-elevator small { font-size: 11px; font-weight: 500; }
 .sprite {
   display: block;
   width: 48px;
@@ -137,6 +164,7 @@
   height: 65px;
   transition: left 900ms cubic-bezier(.16, .9, .25, 1), top 900ms cubic-bezier(.16, .9, .25, 1);
 }
+.office-employee--visitor { transition: none; }
 .office-representative {
   position: absolute;
   z-index: 5;
@@ -338,3 +366,15 @@
   background-repeat: no-repeat;
   image-rendering: pixelated;
 }
+.visitor-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 8px; border: 1px solid #b9b8a9; background: #f4f1e8; color: #172c35; font-size: 12px; }
+.visitor-controls > span:first-child { flex: 1 1 100%; }
+.visitor-controls button, .visitor-picker button, .visitor-inspector button { min-height: 44px; padding: 8px 10px; border: 1px solid #73654c; background: #fffaf0; color: #172c35; cursor: pointer; }
+.visitor-controls button:disabled, .visitor-picker button:disabled { opacity: .55; cursor: not-allowed; }
+.visitor-controls button:focus-visible, .visitor-picker button:focus-visible, .visitor-inspector button:focus-visible { outline: 3px solid #29675c; outline-offset: 2px; }
+.visitor-directions { display: flex; gap: 3px; }
+.visitor-directions button { min-width: 44px; font-size: 18px; font-weight: 800; }
+.visitor-picker, .visitor-inspector { position: fixed; z-index: 1002; top: 50%; left: 50%; display: grid; width: min(420px, calc(100vw - 32px)); max-height: min(80vh, 700px); overflow: auto; gap: 8px; padding: 18px; transform: translate(-50%, -50%); border: 2px solid #67533b; background: #f4f1e8; color: #172c35; box-shadow: 0 12px 40px rgb(21 32 28 / 35%); }
+.visitor-picker h2, .visitor-inspector h2 { margin: 0 0 4px; font-size: 20px; }
+.visitor-picker button { text-align: left; }
+.visitor-inspector { position: fixed; z-index: 1001; top: auto; right: 16px; bottom: 16px; left: auto; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 620px); margin: 0; transform: none; }
+.visitor-inspector p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }

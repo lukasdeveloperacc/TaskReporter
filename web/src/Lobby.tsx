@@ -1,5 +1,6 @@
 import { floorStatus } from '../../shared/contract.ts'
 import type { AskView, ProjectView } from '../../shared/contract.ts'
+import { orderProjectFloors } from './floors.ts'
 
 type LobbyProps = {
   projects: ProjectView[]
@@ -20,9 +21,7 @@ const statusCopy = {
 } as const
 
 export default function Lobby({ projects, asks, now, onOpen }: LobbyProps) {
-  const ordered = [...projects].sort((a, b) => {
-    return a.path.localeCompare(b.path, 'ko') || a.name.localeCompare(b.name, 'ko')
-  })
+  const ordered = orderProjectFloors(projects)
 
   return (
     <main className="lobby-page">
@@ -51,10 +50,10 @@ export default function Lobby({ projects, asks, now, onOpen }: LobbyProps) {
                 <div className="empty-window" aria-hidden="true"><span /><span /><span /></div>
                 <div><h2>아직 등록된 층이 없습니다</h2><p>첫 진행 보고가 도착하면 프로젝트 사무실이 열립니다.</p><span className="empty-caption">팀의 다음 보고를 기다리는 중</span></div>
               </div>
-            ) : ordered.map((project, index) => {
+            ) : ordered.map(({ project, floorNumber }) => {
               const status = floorStatus(project, asks, now)
               const run = latestRun(project)
-              const floor = String(ordered.length - index).padStart(2, '0')
+              const floor = String(floorNumber).padStart(2, '0')
               return (
                 <button
                   className={`floor floor--${status}`}
