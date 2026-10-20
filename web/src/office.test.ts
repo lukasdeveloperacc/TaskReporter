@@ -41,6 +41,8 @@ describe('office roles and employees', () => {
     expect(rankOf('claude-haiku-4')).toBe('신입사원')
     expect(rankOf('claude-sonnet')).toBe('대리')
     expect(rankOf('claude-opus')).toBe('과장')
+    expect(rankOf('gpt-6-luna')).toBe('신입사원')
+    expect(rankOf('gpt-6.1-sol')).toBe('대리')
     expect(characterFrame('backend-1')).toEqual(characterFrame('backend-1'))
   })
 

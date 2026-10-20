@@ -7,7 +7,7 @@ basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다.
 [lukas-plugin](https://github.com/lukasdeveloperacc/PersonalAgentPlugins)이 이 앱을 Docker MCP로 실행하고, 같은 플러그인의 `basic-team` 스킬이 진행을 보고합니다. Docker가 실행 중이어야 합니다.
 
 1. lukas-plugin을 설치한 Claude Code 또는 Codex에서 `office MCP 켜줘`라고 요청합니다. `mcp-setup` 스킬이 MCP(`http://127.0.0.1:4780/mcp`)를 등록하고 `ghcr.io/lukasdeveloperacc/taskreporter:latest`로 `lukas-office` 컨테이너를 `--restart unless-stopped`로 띄웁니다. 데이터는 `taskreporter_office-data` volume에 보존됩니다.
-2. 워크스페이스는 `WORKSPACE_ROOT`(기본 `~/orca`)를 호스트와 **같은 절대 경로**에 읽기 전용으로 연결합니다. 다른 경로를 쓰려면 MCP를 켜기 전에 `WORKSPACE_ROOT`를 export합니다. 이 범위 밖의 프로젝트도 층과 진행은 표시되지만 기획서 열람·변경 감지는 불가능합니다.
+2. 워크스페이스는 `WORKSPACE_ROOT`(lukas-plugin 기본 `$HOME`)를 호스트와 **같은 절대 경로**에 읽기 전용으로 연결합니다. 다른 경로를 쓰려면 MCP를 켜기 전에 `WORKSPACE_ROOT`를 export합니다. 이 범위 밖의 프로젝트도 층과 진행은 표시되지만 기획서 열람·변경 감지는 불가능합니다.
 3. 결재 대기(295초)보다 도구 제한 시간이 길어야 합니다. Claude는 `MCP_TOOL_TIMEOUT=325000 claude`로 시작하고, Codex는 `${CODEX_HOME:-$HOME/.codex}/config.toml`의 `[mcp_servers.office]`에 `tool_timeout_sec = 325`를 둡니다([Codex MCP 설정](https://developers.openai.com/codex/mcp/)).
 4. 새 세션에서 Claude는 `/basic-team <작업 요청>`, Codex는 `$basic-team <작업 요청>`으로 실행합니다. office 도구가 있으면 basic-team이 Office 모드로 보고합니다. 작업할 저장소가 프로젝트 층으로 등록됩니다.
 

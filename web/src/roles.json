@@ -27,6 +27,8 @@
   "ranks": [
     { "match": "haiku", "rank": "신입사원" },
     { "match": "sonnet", "rank": "대리" },
-    { "match": "opus", "rank": "과장" }
+    { "match": "opus", "rank": "과장" },
+    { "match": "luna", "rank": "신입사원" },
+    { "match": "sol", "rank": "대리" }
   ]
 }
