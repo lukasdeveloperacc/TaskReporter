@@ -226,11 +226,11 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   }
   const interact = (tab: 'current' | 'history' = 'current') => {
     if (!visitorCanInteract) return
-    if (nearElevator && tab === 'current') { setVisitorPaused(true); setVisitorPanel({ kind: 'elevator' }); return }
-    if (currentEmployee) { setVisitorPaused(true); setVisitorPanel({ kind: 'employee', owner: currentEmployee.name, tab }); return }
+    if (nearElevator && tab === 'current') { setVisitorPanel({ kind: 'elevator' }); return }
+    if (currentEmployee) { setVisitorPanel({ kind: 'employee', owner: currentEmployee.name, tab }); return }
   }
-  const closeVisitorPanel = (restore = true, resume = false) => {
-    setVisitorPanel(null); setVisitorPaused(!resume)
+  const closeVisitorPanel = (restore = true) => {
+    setVisitorPanel(null)
     if (restore && !interactionBlocked) focusMap()
   }
   const onMapKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -433,10 +433,19 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     {visitorEnabled && elevatorOpen && <div className="visitor-picker" role="dialog" aria-modal="true" aria-label="다른 프로젝트 층 선택" onKeyDown={handlePickerKeyDown}>
       <h2>어느 층으로 갈까요?</h2><p className="visitor-picker__help">↑/↓ 층 이동 · Home/End 처음/끝 · Enter 선택 · Esc 닫기</p><button type="button" onClick={() => closeVisitorPanel()}>닫기</button>
       {visitorMessage && <p role="alert">{visitorMessage}</p>}
-      {floors.map((floor) => <button key={floor.projectPath} ref={floor === firstAvailableFloor ? visitorFocusRef : undefined} type="button" disabled={floor.disabled || floor.current} onClick={() => { const moved = onVisitProject?.(floor.projectPath); if (moved === false) setVisitorMessage('해당 프로젝트 층을 사용할 수 없습니다. 최신 보고 상태를 확인해 주세요.'); else setVisitorPanel(null) }}>{floor.floorNumber}층 · {floor.name} · {floor.status}{floor.current ? ' · 현재 층' : ''}</button>)}
+      {floors.map((floor) => <button key={floor.projectPath} ref={floor === firstAvailableFloor ? visitorFocusRef : undefined} type="button" disabled={floor.disabled || floor.current} onClick={() => { const moved = onVisitProject?.(floor.projectPath); if (moved === false) setVisitorMessage('해당 프로젝트 층을 사용할 수 없습니다. 최신 보고 상태를 확인해 주세요.'); else closeVisitorPanel() }}>{floor.floorNumber}층 · {floor.name} · {floor.status}{floor.current ? ' · 현재 층' : ''}</button>)}
       <button ref={firstAvailableFloor ? undefined : visitorFocusRef} type="button" onClick={() => { onVisitorEnabledChange?.(false); setVisitorPanel(null); window.location.hash = '#/' }}>빌딩 로비로 돌아가기</button>
     </div>}
-    {visitorEnabled && inspectedOwner !== null && <aside className="visitor-inspector" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
+    {visitorEnabled && inspectedOwner !== null && <div className="visitor-inspector-backdrop"><aside className="visitor-inspector" role="dialog" aria-modal="true" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
+      if (event.key === 'Tab') {
+        const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), [tabindex="0"]')]
+        const first = focusable[0]
+        const last = focusable.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+        event.stopPropagation()
+        return
+      }
       if (event.key === 'Escape' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeVisitorPanel(); return }
       if (event.key !== 'Enter' || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
       const target = event.target
@@ -448,10 +457,10 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
       event.stopPropagation()
       if (visitorPanel?.kind === 'employee' && visitorPanel.tab === 'current') {
         setVisitorPanel({ ...visitorPanel, tab: 'history' })
-      } else closeVisitorPanel(true, true)
+      } else closeVisitorPanel()
     }}>
-      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.state === 'away' ? '자리 비움' : selected.state === 'gone' ? '업무 종료' : '근무 중'}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
+      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.state === 'away' ? '자리 비움' : selected.state === 'gone' ? '업무 종료' : '근무 중'}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속 · Esc 닫기</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
       <button ref={visitorInspectorCloseRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
-    </aside>}
+    </aside></div>}
   </section>
 }

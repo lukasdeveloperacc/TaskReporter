@@ -378,12 +378,23 @@
 .visitor-picker, .visitor-inspector { position: fixed; z-index: 1002; top: 50%; left: 50%; display: grid; width: min(420px, calc(100vw - 32px)); max-height: min(80vh, 700px); overflow: auto; gap: 8px; padding: 18px; transform: translate(-50%, -50%); border: 2px solid #67533b; background: #f4f1e8; color: #172c35; box-shadow: 0 12px 40px rgb(21 32 28 / 35%); }
 .visitor-picker h2, .visitor-inspector h2 { margin: 0 0 4px; font-size: 20px; }
 .visitor-picker button { text-align: left; }
-.visitor-inspector { position: fixed; z-index: 1001; top: auto; right: 16px; bottom: 16px; left: auto; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 620px); margin: 0; transform: none; }
-.visitor-inspector p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
-.visitor-inspector [role="tablist"] { display: flex; gap: 6px; margin: 8px 0; }
-.visitor-inspector [role="tab"] { min-height: 44px; padding: 7px 10px; border: 1px solid #73654c; background: #fffaf0; color: #172c35; cursor: pointer; }
+.visitor-inspector-backdrop { position: fixed; z-index: 1001; inset: 0; box-sizing: border-box; display: grid; place-items: center; padding: 16px; background: rgb(21 32 28 / 62%); }
+.visitor-inspector { position: relative; z-index: auto; inset: auto; top: auto; right: auto; bottom: auto; left: auto; width: min(960px, 100%); max-height: min(85dvh, 900px); box-sizing: border-box; overflow: auto; gap: 12px; margin: 0; padding: clamp(20px, 3vw, 32px); transform: none; }
+.visitor-inspector h2 { margin: 0 0 8px; font-size: clamp(26px, 3vw, 34px); line-height: 1.15; }
+.visitor-inspector p { margin: 0; font-size: 17px; line-height: 1.6; overflow-wrap: anywhere; }
+.visitor-inspector .visitor-inspector__help { margin-top: 4px; color: #3d554d; font-size: 14px; }
+.visitor-inspector [role="tablist"] { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.visitor-inspector [role="tab"] { min-height: 44px; padding: 9px 14px; border: 1px solid #73654c; background: #fffaf0; color: #172c35; cursor: pointer; font-size: 16px; }
 .visitor-inspector [role="tab"][aria-selected="true"] { border-color: #29675c; background: #29675c; color: #fffdf6; font-weight: 700; }
 .visitor-inspector [role="tab"]:focus-visible { outline: 3px solid #bf7839; outline-offset: 2px; }
-.visitor-inspector [role="tabpanel"] { overflow-wrap: anywhere; }
+.visitor-inspector [role="tabpanel"] { overflow-wrap: anywhere; font-size: 18px; line-height: 1.65; }
 .visitor-inspector [role="tabpanel"] > ul { display: grid; gap: 10px; margin: 8px 0; padding-left: 20px; }
 .visitor-inspector [role="tabpanel"] li > ul { display: grid; gap: 8px; margin-top: 6px; padding-left: 18px; }
+.visitor-inspector [role="tabpanel"] > p, .visitor-inspector [role="tabpanel"] li > p:last-of-type { font-size: 20px; }
+.visitor-inspector [role="tabpanel"] h3, .visitor-inspector [role="tabpanel"] h4 { margin: 10px 0 4px; font-size: 24px; line-height: 1.3; overflow-wrap: anywhere; }
+.visitor-inspector [role="tabpanel"] p { margin: 2px 0; font-size: 17px; line-height: 1.6; }
+@media (max-width: 640px) {
+  .visitor-inspector { max-height: min(85dvh, calc(100dvh - 32px)); padding: 18px; }
+  .visitor-inspector [role="tabpanel"] > p, .visitor-inspector [role="tabpanel"] li > p:last-of-type { font-size: 18px; }
+  .visitor-inspector [role="tabpanel"] h3, .visitor-inspector [role="tabpanel"] h4 { font-size: 22px; }
+}

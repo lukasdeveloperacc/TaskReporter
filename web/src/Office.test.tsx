@@ -98,6 +98,41 @@ describe('Office scene controls and coordinates', () => {
     expect(leader?.getAttribute('data-employee')).toBe('leader')
   })
 
+  it('keeps the report dialog centered and inside desktop and mobile viewports from computed CSS', () => {
+    const stylesheet = document.createElement('style')
+    stylesheet.textContent = readFileSync('web/src/office.css', 'utf8')
+    document.head.append(stylesheet)
+    const backdrop = document.createElement('div')
+    backdrop.className = 'visitor-inspector-backdrop'
+    const dialog = document.createElement('aside')
+    dialog.className = 'visitor-inspector'
+    backdrop.append(dialog)
+    document.body.append(backdrop)
+
+    const computed = getComputedStyle(dialog)
+    const offset = (value: string, basis: number) => value === 'auto' ? 0 : value.endsWith('%') ? basis * Number.parseFloat(value) / 100 : Number.parseFloat(value)
+    const positions = [
+      { viewportWidth: 1440, viewportHeight: 900, dialogHeight: 669, expected: { left: 240, top: 115.5 } },
+      { viewportWidth: 390, viewportHeight: 844, dialogHeight: 628, expected: { left: 16, top: 108 } },
+    ]
+    expect(computed.position).toBe('relative')
+    for (const { viewportWidth, viewportHeight, dialogHeight, expected } of positions) {
+      const availableWidth = viewportWidth - 32
+      const availableHeight = viewportHeight - 32
+      const dialogWidth = Math.min(960, availableWidth)
+      const left = 16 + (availableWidth - dialogWidth) / 2 + offset(computed.left, availableWidth)
+      const top = 16 + (availableHeight - dialogHeight) / 2 + offset(computed.top, availableHeight)
+      expect(left).toBeCloseTo(expected.left)
+      expect(top).toBeCloseTo(expected.top)
+      expect(left).toBeGreaterThanOrEqual(0)
+      expect(left + dialogWidth).toBeLessThanOrEqual(viewportWidth)
+      expect(top).toBeGreaterThanOrEqual(0)
+      expect(top + dialogHeight).toBeLessThanOrEqual(viewportHeight)
+    }
+    backdrop.remove()
+    stylesheet.remove()
+  })
+
   it('shows reported model IDs for idle staff and marks missing active-task models honestly', () => {
     const run = makeRun([
       { id: 'C', owner: 'backend-1', lane: 'build', status: '완료', title: '완료한 Claude 작업', model: 'claude-3-7-sonnet-20250219', effort: 'high' },
@@ -261,24 +296,58 @@ describe('Office scene controls and coordinates', () => {
     fireEvent.keyDown(lobby, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const before = avatar.style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(before)
     expect(picker).toBeTruthy()
   })
 
-  it('keeps controls paused after closing an inspection and resumes by explicit action', () => {
+  it('keeps movement blocked while a destination visit fails, then resumes on close', () => {
+    const onVisitProject = vi.fn(() => false)
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled floors={[
+      { projectPath: '/workspace/other', name: 'other', floorNumber: 1, status: '근무 중', disabled: false, current: false },
+    ]} onVisitProject={onVisitProject} />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    floor.focus()
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
+    fireEvent.click(screen.getByRole('button', { name: /other/ }))
+    expect(onVisitProject).toHaveBeenCalledWith('/workspace/other')
+    expect(picker).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('해당 프로젝트 층을 사용할 수 없습니다')
+    const blockedAt = avatar.style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).toBe(blockedAt)
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(blockedAt)
+  })
+
+  it('continues walking after closing an inspection and still honors deliberate pause', () => {
     render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled onVisitorEnabledChange={() => {}} />)
     const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
     floor.focus()
     fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
     expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '닫기' }))
-    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
-    const before = (screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top
+    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const before = avatar.style.top
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
-    expect((screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top).toBe(before)
+    expect(avatar.style.top).not.toBe(before)
+    const walking = avatar.style.top
+    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).toBe(walking)
     fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
-    expect((screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement).style.top).not.toBe(before)
+    expect(avatar.style.top).not.toBe(walking)
   })
 
   it('ignores modified, composing, descendant and repeated interaction keys while keeping touch steps available', () => {
@@ -389,8 +458,7 @@ describe('Office scene controls and coordinates', () => {
     fireEvent.keyDown(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' }), { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
     await waitFor(() => expect(document.activeElement).toBe(floor))
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).not.toBe(walked)
