@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import roles from './roles.json' with { type: 'json' }
 import { moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point, type RoomGeometry } from './visitor.ts'
-import { moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
+import { findVisitorPath, moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
 
 const geometry = roomGeometry(roles.departments)
 const directions: Direction[] = ['up', 'down', 'left', 'right']
@@ -25,6 +25,38 @@ function reachableInArea(start: Point, geometry: RoomGeometry): Set<string> {
 }
 
 describe('room navigation', () => {
+  it('finds wall-safe routes to every room from spawn, an off-grid CEO seat, and another room', () => {
+    const starts = [VISITOR_SPAWN, { x: 122, y: 192 }, { x: 1104, y: 528 }]
+    for (const start of starts) {
+      for (const room of geometry.rooms) {
+        const target = { x: room.x + 48, y: room.y + 144 }
+        const path = findVisitorPath(start, target, geometry)
+        expect(path, `${JSON.stringify(start)} to ${room.name}`).not.toBeNull()
+        expect(path![0]).toEqual(start)
+        const end = path!.at(-1)!
+        expect(roomKeyAt(end, geometry)).toBe(room.key)
+        expect(Math.hypot(end.x - target.x, end.y - target.y)).toBeLessThanOrEqual(24)
+        for (let index = 1; index < path!.length; index++) {
+          expect(directions.some((direction) => {
+            const next = moveVisitor(path![index - 1], direction, geometry)
+            return next.x === path![index].x && next.y === path![index].y
+          })).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('returns the current point when already at the destination', () => {
+    expect(findVisitorPath(VISITOR_SPAWN, VISITOR_SPAWN, geometry)).toEqual([VISITOR_SPAWN])
+  })
+
+  it('returns null for unreachable or out-of-bounds destinations', () => {
+    const room = geometry.rooms[0]
+    const sealed = { ...geometry, walls: [...geometry.walls, room.door] }
+    expect(findVisitorPath(VISITOR_SPAWN, { x: room.x + 48, y: room.y + 144 }, sealed)).toBeNull()
+    expect(findVisitorPath(VISITOR_SPAWN, { x: -1, y: 100 }, geometry)).toBeNull()
+  })
+
   it('treats only strict room interiors as rooms', () => {
     const room = geometry.rooms[0]
     expect(roomKeyAt({ x: room.x + 1, y: room.y + 1 }, geometry)).toBe(room.key)

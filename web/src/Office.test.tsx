@@ -73,7 +73,7 @@ describe('Office scene controls and coordinates', () => {
     expect(Number.parseFloat(stage.style.height)).toBeCloseTo(1600 * scale)
     expect(Number.parseFloat(stage.style.height)).toBeLessThanOrEqual(900 - toolbarHeight)
     fireEvent.keyDown(toggle, { key: 'Tab', shiftKey: true })
-    const lastStaffCard = document.querySelectorAll('.office-bubble').item(document.querySelectorAll('.office-bubble').length - 1)
+    const lastStaffCard = document.querySelectorAll('.office-employee').item(document.querySelectorAll('.office-employee').length - 1)
     expect(document.activeElement).toBe(lastStaffCard)
     fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
     expect(document.activeElement).toBe(toggle)
@@ -566,7 +566,8 @@ describe('simultaneous worker layout', () => {
     expect(secondBubbleLeft - firstBubbleLeft).toBeGreaterThan(bubbleWidth)
     const backendRoom = document.getElementById('office-room-3') as HTMLElement
     expect(secondBubbleLeft + bubbleWidth).toBeLessThanOrEqual(Number.parseFloat(backendRoom.style.left) + Number.parseFloat(backendRoom.style.width))
-    expect(firstBubble.getAttribute('tabindex')).toBe('0')
+    first.focus()
+    expect(document.activeElement).toBe(first)
     expect(firstBubble.getAttribute('title')).toBe(`backend-1 · ${title1} · 모델 claude-3-7-sonnet-20250219-provider-custom-xlarge · 노력 high`)
     expect(getComputedStyle(firstBubble).maxHeight).toBe('120px')
     expect(firstBubble.querySelector('.office-name')?.textContent).toBe('backend-1 · 대리')

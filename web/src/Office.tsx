@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import type { AskView, RunView } from '../../shared/contract.ts'
 import { buildOffice, characterFrame, diffScenes, fitOfficeScale, OFFICE_HEIGHT, OFFICE_WIDTH, seatPosition, type Scene } from './office.ts'
 import { ELEVATOR_RECT, moveVisitor, nearestInteraction, roomGeometry, visitorSpriteBounds, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
-import { moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
+import { findVisitorPath, moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
 import { RoomMiniMap } from './RoomMiniMap.tsx'
 import { EmployeeReport } from './EmployeeReport.tsx'
 import roles from './roles.json' with { type: 'json' }
@@ -15,6 +15,7 @@ const departmentByKey = new Map(roles.departments.map((department) => [departmen
 const TILE = 48
 const MAX_SCENES = 40
 const BUBBLE_WIDTH = 148
+const CEO_START: Point = { x: 122, y: 240 }
 
 function Sprite({ frame, className = '' }: { frame: [number, number]; className?: string }) {
   const [col, row] = frame
@@ -86,7 +87,10 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   const overviewTriggerRef = useRef<HTMLButtonElement>(null)
   const restoreTriggerFocus = useRef(false)
   const [overviewOpen, setOverviewOpen] = useState(false)
-  const [visitorPoint, setVisitorPoint] = useState<Point>(VISITOR_SPAWN)
+  const [visitorPoint, setVisitorPoint] = useState<Point>(visitorEnabled ? VISITOR_SPAWN : CEO_START)
+  const visitorPointRef = useRef(visitorPoint)
+  visitorPointRef.current = visitorPoint
+  const [walkingOwner, setWalkingOwner] = useState<string | null>(null)
   const [visitorPaused, setVisitorPaused] = useState(false)
   const [targetRoomKey, setTargetRoomKey] = useState<string | null>(null)
   const [visitorPanel, setVisitorPanel] = useState<VisitorPanel | null>(null)
@@ -94,6 +98,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   const [visitorMapHeight, setVisitorMapHeight] = useState<number | null>(null)
   const visitorFocusRef = useRef<HTMLButtonElement>(null)
   const visitorInspectorCloseRef = useRef<HTMLButtonElement>(null)
+  const employeeTriggerRef = useRef<HTMLButtonElement | null>(null)
   const focusFrameRef = useRef<number | undefined>(undefined)
   const [fitScale, setFitScale] = useState(1)
   const roomRefs = useRef(new Map<string, HTMLElement>())
@@ -144,6 +149,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     })
   }
   const openAsk = (id: string) => {
+    setWalkingOwner(null)
     restoreTriggerFocus.current = false
     if (visitorEnabled) setVisitorPaused(true)
     setVisitorPanel(null)
@@ -151,6 +157,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     onOpenAsk(id)
   }
   const toggleOverview = () => {
+    setWalkingOwner(null)
     if (overviewOpen) {
       restoreTriggerFocus.current = !interactionBlocked
       setVisitorPanel(null)
@@ -206,7 +213,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
 
   const geometry = useMemo(() => roomGeometry(roles.departments), [])
   const activeVisitors = visitorEnabled && !visitorPaused && !interactionBlocked && visitorPanel === null
-  const cameraFollowVisitor = activeVisitors && !overviewOpen
+  const cameraFollowVisitor = (activeVisitors || walkingOwner !== null) && !overviewOpen
   const elevatorOpen = visitorPanel?.kind === 'elevator'
   const firstAvailableFloor = floors.find((floor) => !floor.disabled && !floor.current)
   const inspectedOwner = visitorPanel?.kind === 'employee' ? visitorPanel.owner : null
@@ -216,7 +223,47 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   })
   const inspectedEmployeeAvailable = inspectedOwner !== null && employeeAnchors.some(({ employee }) => employee.name === inspectedOwner)
   const inspectedTab = visitorPanel?.kind === 'employee' ? visitorPanel.tab : null
-  const activeRoomKey = roomKeyAt(visitorPoint, geometry)
+  const walkingEmployee = employeeAnchors.find(({ employee }) => employee.name === walkingOwner)
+  const walkingRoom = geometry.rooms.find(({ key }) => key === walkingEmployee?.employee.department)
+  const walkingTargetX = walkingEmployee ? walkingEmployee.point.x + (visitorEnabled ? 0 : 24) : undefined
+  const walkingTargetY = walkingEmployee && walkingRoom ? Math.min(walkingEmployee.point.y + (visitorEnabled ? 48 : 72), walkingRoom.y + walkingRoom.height - 24) : undefined
+  useEffect(() => {
+    if (walkingOwner === null) return
+    if (interactionBlocked || visitorPanel !== null || walkingTargetX === undefined || walkingTargetY === undefined) {
+      setWalkingOwner(null)
+      return
+    }
+    const path = findVisitorPath(visitorPointRef.current, { x: walkingTargetX, y: walkingTargetY }, geometry)
+    if (!path) {
+      setWalkingOwner(null)
+      setVisitorMessage('직원에게 가는 길을 찾을 수 없습니다.')
+      return
+    }
+    const arrive = () => {
+      setVisitorPoint(path[path.length - 1])
+      setWalkingOwner(null)
+      setVisitorPanel({ kind: 'employee', owner: walkingOwner, tab: 'current' })
+    }
+    if (path.length === 1 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      arrive()
+      return
+    }
+    const duration = Math.min(900, Math.max(500, path.length * 12))
+    let started: number | undefined
+    let frame: number
+    let lastIndex = 0
+    const step = (time: number) => {
+      started ??= time
+      const progress = Math.min(1, (time - started) / duration)
+      if (progress >= 1) { arrive(); return }
+      const index = Math.floor(progress * (path.length - 1))
+      if (index !== lastIndex) { setVisitorPoint(path[index]); lastIndex = index }
+      frame = requestAnimationFrame(step)
+    }
+    frame = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(frame)
+  }, [walkingOwner, walkingTargetX, walkingTargetY, geometry, interactionBlocked, visitorPanel, run.id, visitorEnabled])
+  const activeRoomKey = visitorEnabled ? roomKeyAt(visitorPoint, geometry) : null
   const doorInteraction = visitorEnabled && !overviewOpen ? nearestDoor(visitorPoint, geometry) : null
   const scopedEmployeeAnchors = overviewOpen
     ? employeeAnchors
@@ -229,11 +276,13 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   const visitorCanInteract = activeVisitors && currentInteraction !== null
   const move = (direction: Direction) => {
     if (!activeVisitors) return
+    setWalkingOwner(null)
     setVisitorPoint((point) => overviewOpen ? moveVisitor(point, direction, geometry) : moveWithinArea(point, direction, geometry))
     setVisitorMessage('')
   }
   const interact = (tab: 'current' | 'history' = 'current') => {
     if (!visitorCanInteract) return
+    setWalkingOwner(null)
     if (doorInteraction && tab === 'current') {
       setVisitorPoint(doorInteraction.destination)
       setTargetRoomKey((target) => target === doorInteraction.roomKey ? null : target)
@@ -245,15 +294,21 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   }
   const closeVisitorPanel = (restore = true) => {
     setVisitorPanel(null)
-    if (restore && !interactionBlocked) focusMap()
+    if (restore && !interactionBlocked) {
+      if (visitorEnabled) focusMap()
+      else if (employeeTriggerRef.current?.isConnected && !employeeTriggerRef.current.disabled) employeeTriggerRef.current.focus({ preventScroll: true })
+      else floorRef.current?.focus({ preventScroll: true })
+    }
   }
   const onMapKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing || !visitorEnabled || interactionBlocked) return
+    if (event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing || interactionBlocked) return
+    if (event.key === 'Escape' && walkingOwner !== null) { event.preventDefault(); event.stopPropagation(); setWalkingOwner(null); return }
+    if (event.target !== event.currentTarget || !visitorEnabled) return
     const keyDirections: Record<string, Direction> = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' }
     const direction = keyDirections[event.code] ?? (event.code ? undefined : ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' } as Record<string, Direction>)[event.key])
     if (direction) { if (!visitorPaused && !visitorPanel) { event.preventDefault(); move(direction) }; return }
     if (event.code === 'Space' || event.key === ' ') {
-      if (!visitorPanel && !event.repeat) { event.preventDefault(); const resume = visitorPaused; setVisitorPaused(!visitorPaused); if (resume) focusMap() }
+      if (!visitorPanel && !event.repeat) { event.preventDefault(); setWalkingOwner(null); const resume = visitorPaused; setVisitorPaused(!visitorPaused); if (resume) focusMap() }
       return
     }
     if (event.code === 'KeyF' || event.key.toLowerCase() === 'f') { if (!visitorPanel && !event.repeat) { event.preventDefault(); toggleOverview() }; return }
@@ -264,8 +319,9 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   }
 
   useEffect(() => {
+    setWalkingOwner(null)
+    setVisitorPoint(visitorEnabled ? VISITOR_SPAWN : CEO_START)
     if (!visitorEnabled) { setVisitorPaused(false); setVisitorPanel(null); return }
-    setVisitorPoint(VISITOR_SPAWN)
     setVisitorPaused(false)
     setVisitorPanel(null)
     focusMap()
@@ -303,7 +359,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     return () => window.removeEventListener('resize', recenter)
   }, [cameraFollowVisitor, visitorPoint, visitorMapHeight])
   useEffect(() => {
-    if (!visitorEnabled || interactionBlocked || inspectedOwner === null) return
+    if (interactionBlocked || inspectedOwner === null) return
     if (!inspectedEmployeeAvailable) {
       visitorInspectorCloseRef.current?.focus({ preventScroll: true })
       return
@@ -313,6 +369,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
 
   const handleDialogKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
+      if (walkingOwner !== null) { event.preventDefault(); event.stopPropagation(); setWalkingOwner(null); return }
       if (visitorPanel !== null) { event.preventDefault(); event.stopPropagation(); closeVisitorPanel(); return }
       event.preventDefault()
       restoreTriggerFocus.current = !interactionBlocked
@@ -378,7 +435,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
       }}>{department.name}</button>)}
     </nav>
     {visitorEnabled && <div className={`visitor-controls${overviewOpen ? ' visitor-controls--overview' : ''}`} aria-label="둘러보기 조작">
-      <span>{overviewOpen ? 'WASD/방향키 이동 · E/Enter 현재 업무 · J 기록 · R 현재 · F 전체 보기 · Space 일시정지' : '방향키 또는 WASD로 이동 · 문 앞에서 E/Enter 입장/퇴장 · 팀 안에서 E/Enter 업무 · J 기록 · F 전체 보기 · Space 일시정지'}</span>
+      <span>{overviewOpen ? '캐릭터 클릭 찾아가서 업무 보기 · WASD/방향키 이동 · E/Enter 현재 업무 · J 기록 · R 현재 · F 전체 보기 · Space 일시정지' : '캐릭터 클릭 찾아가서 업무 보기 · 방향키 또는 WASD로 이동 · 문 앞에서 E/Enter 입장/퇴장 · 팀 안에서 E/Enter 업무 · J 기록 · F 전체 보기 · Space 일시정지'}</span>
       <RoomMiniMap geometry={geometry} point={visitorPoint} activeRoomKey={activeRoomKey} targetRoomKey={overviewOpen ? null : targetRoomKey} />
       {!overviewOpen && targetRoomKey && <span className="visitor-guidance" role="status">{(() => {
         const target = geometry.rooms.find(({ key }) => key === targetRoomKey)
@@ -391,9 +448,11 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
       })()}</span>}
       <div className="visitor-directions"><button aria-label="위로 이동" onClick={() => move('up')} disabled={!activeVisitors}>↑</button><button aria-label="왼쪽으로 이동" onClick={() => move('left')} disabled={!activeVisitors}>←</button><button aria-label="아래로 이동" onClick={() => move('down')} disabled={!activeVisitors}>↓</button><button aria-label="오른쪽으로 이동" onClick={() => move('right')} disabled={!activeVisitors}>→</button></div>
       <button type="button" onKeyDown={(event) => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} onClick={() => interact()} disabled={!visitorCanInteract}>{overviewOpen ? '살펴보기' : doorInteraction ? `${doorInteraction.kind === 'enter' ? '입장' : '퇴장'} · ${geometry.rooms.find(({ key }) => key === doorInteraction.roomKey)?.name ?? '팀'}` : `살펴보기 · ${currentInteraction === 'elevator' ? '엘리베이터' : currentInteraction ?? '주변을 둘러보세요'}`}</button>
-      <button type="button" onClick={() => { const resume = visitorPaused; setVisitorPaused(!visitorPaused); if (resume) focusMap() }} disabled={visitorPanel !== null || interactionBlocked}>{visitorPaused ? '둘러보기 재개' : '잠시 멈춤'}</button>
+      <button type="button" onClick={() => { setWalkingOwner(null); const resume = visitorPaused; setVisitorPaused(!visitorPaused); if (resume) focusMap() }} disabled={visitorPanel !== null || interactionBlocked}>{visitorPaused ? '둘러보기 재개' : '잠시 멈춤'}</button>
       {visitorMessage && <span role="status">{visitorMessage}</span>}
     </div>}
+    {walkingOwner !== null && <span className="office-walk-status" role="status">{walkingOwner}에게 이동 중…</span>}
+    {!visitorEnabled && visitorMessage && <span role="status">{visitorMessage}</span>}
     <div id="office-floor-scroll" ref={floorRef} className={`office-scroll${overviewOpen ? ' office-scroll--overview' : ''}${visitorEnabled ? ' office-scroll--visitor' : ''}`} style={visitorEnabled && !overviewOpen && visitorMapHeight !== null ? { maxHeight: visitorMapHeight } : undefined} role="region" aria-label={`${run.title} 사무실 바닥`} tabIndex={0} onKeyDown={onMapKeyDown}>
     <div className="office-map-stage" style={stageStyle} data-fit-scale={overviewOpen ? fitScale : 1}>
     <div className={`office-scene${run.ended_at ? ' office-scene--off' : ''}${visitorEnabled && !overviewOpen ? activeRoomKey ? ' office-scene--room' : ' office-scene--corridor' : ''}`} data-run-id={run.id} data-active-room={activeRoomKey ?? undefined} style={mapStyle} onClick={(event) => { if (!visitorEnabled || visitorPaused || interactionBlocked || visitorPanel !== null) return; const target = event.target; if (target instanceof Element && target.closest('button, input, select, textarea, [contenteditable="true"]')) return; focusMap() }}>
@@ -404,7 +463,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         {visibleInterior && department.key === '대표실' && <span className="office-plant" aria-hidden="true" />}
         {visitorEnabled && !overviewOpen && (activeRoomKey === null || activeRoomKey === department.key) && <span className="office-door-sign" aria-hidden="true">{activeRoomKey === null ? `↑ ${department.name} · Enter 입장` : '↓ 복도 · Enter 퇴장'}</span>}
       </section>})}
-      <div className="office-representative" data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" style={visitorEnabled ? visitorSpriteBounds(visitorPoint) : { left: 2 * TILE, top: 4 * TILE }}>
+      <div className={`office-representative${walkingOwner !== null ? ' office-representative--walking' : ''}`} data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" style={visitorSpriteBounds(visitorPoint)}>
         <Sprite frame={characterFrame('대표 · 나')} className="office-person" />
         <span className="office-name">대표 · 나</span>
       </div>
@@ -422,12 +481,19 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         const travelTarget = delivery ? deliveryAudit : returning && returnOwner ? deskPositions.get(returnOwner) ?? position : position
         const travelsThisScene = delivery || returning
         const at = visitorEnabled ? { x: position.x - 26, y: position.y - 48 }
+          : walkingOwner === employee.name || inspectedOwner === employee.name ? position
           : walkers.has(employee.name)
           ? { x: 13 * TILE + (office.employees.findIndex(({ name }) => name === employee.name) % 6) * 56, y: 13 * TILE + Math.floor(office.employees.findIndex(({ name }) => name === employee.name) / 6) * 56 }
           : travelsThisScene && sceneTraveling ? travelTarget : isWorking || employee.state === 'away' || travelsThisScene ? position : parked
-        return <div key={employee.name} className={`office-employee office-employee--${employee.state}${visitorEnabled ? ' office-employee--visitor' : ''}`} data-employee={employee.name} data-state={employee.state} style={{ left: at.x, top: at.y, '--employee-color': desk.color, '--walk-key': motionKey } as CSSProperties}>
+        return <button type="button" key={employee.name} className={`office-employee office-employee--${employee.state}${visitorEnabled ? ' office-employee--visitor' : ''}${walkingOwner === employee.name ? ' office-employee--destination' : ''}`} data-employee={employee.name} data-state={employee.state} aria-label={`${employee.name === 'leader' ? '부장 · leader' : employee.name} 현재 업무 보기`} aria-haspopup="dialog" disabled={employee.state === 'gone' || interactionBlocked} onClick={(event) => {
+          if (visitorPanel !== null) return
+          employeeTriggerRef.current = event.currentTarget
+          setVisitorMessage('')
+          setWalkingOwner(employee.name)
+          if (visitorEnabled) focusMap()
+        }} style={{ left: at.x, top: at.y, '--employee-color': desk.color, '--walk-key': motionKey } as CSSProperties}>
           <Sprite frame={employee.frame} className="office-person" />
-          <span className="office-bubble office-bubble--staff" tabIndex={employee.state === 'gone' ? undefined : 0} title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px`, maxHeight: 120 } as CSSProperties}>
+          <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px`, maxHeight: 120 } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : `${employee.name}${employee.rank ? ` · ${employee.rank}` : ''}`}</span>
             {employee.task && <strong className="office-task-title" title={employee.task.title}>{employee.task.title}</strong>}
             <strong className="office-model-line">모델 · {employee.model ?? '미보고'}</strong>
@@ -438,7 +504,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           </span>
           <span className="office-desk" aria-hidden="true" style={{ left: x - at.x, top: y - at.y }} />
           <span className="office-chair" aria-hidden="true" style={{ left: x - at.x, top: y - at.y + 37 }} />
-        </div>
+        </button>
       })}
       {(overviewOpen || !visitorEnabled || activeRoomKey !== null) && scene && (scene.type === 'deliver' || scene.type === 'return') && (() => {
         const audit = { x: (departmentByKey.get('감사팀')!.x + 4) * TILE, y: (departmentByKey.get('감사팀')!.y + 2) * TILE }
@@ -465,7 +531,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
       {floors.map((floor) => <button key={floor.projectPath} ref={floor === firstAvailableFloor ? visitorFocusRef : undefined} type="button" disabled={floor.disabled || floor.current} onClick={() => { const moved = onVisitProject?.(floor.projectPath); if (moved === false) setVisitorMessage('해당 프로젝트 층을 사용할 수 없습니다. 최신 보고 상태를 확인해 주세요.'); else closeVisitorPanel() }}>{floor.floorNumber}층 · {floor.name} · {floor.status}{floor.current ? ' · 현재 층' : ''}</button>)}
       <button ref={firstAvailableFloor ? undefined : visitorFocusRef} type="button" onClick={() => { onVisitorEnabledChange?.(false); setVisitorPanel(null); window.location.hash = '#/' }}>빌딩 로비로 돌아가기</button>
     </div>}
-    {visitorEnabled && inspectedOwner !== null && <div className="visitor-inspector-backdrop"><aside className="visitor-inspector" role="dialog" aria-modal="true" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
+    {inspectedOwner !== null && <div className="visitor-inspector-backdrop"><aside className="visitor-inspector" role="dialog" aria-modal="true" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
       if (event.key === 'Tab') {
         const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), [tabindex="0"]')]
         const first = focusable[0]

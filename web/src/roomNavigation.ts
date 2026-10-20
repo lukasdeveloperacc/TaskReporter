@@ -18,6 +18,30 @@ export function moveWithinArea(point: Point, direction: Direction, geometry: Roo
   return roomKeyAt(next, geometry) === roomKeyAt(point, geometry) ? next : point
 }
 
+export function findVisitorPath(start: Point, target: Point, geometry: RoomGeometry): Point[] | null {
+  if (!isInsideWorld(start, geometry) || !isInsideWorld(target, geometry)) return null
+  const targetRoom = roomKeyAt(target, geometry)
+  const queue = [{ point: start, parent: -1 }]
+  const visited = new Set([`${start.x},${start.y}`])
+  const directions: Direction[] = ['up', 'down', 'left', 'right']
+  for (let index = 0; index < queue.length; index++) {
+    const { point } = queue[index]
+    if (roomKeyAt(point, geometry) === targetRoom && Math.hypot(point.x - target.x, point.y - target.y) <= 24) {
+      const path: Point[] = []
+      for (let cursor = index; cursor !== -1; cursor = queue[cursor].parent) path.push(queue[cursor].point)
+      return path.reverse()
+    }
+    for (const direction of directions) {
+      const next = moveVisitor(point, direction, geometry)
+      const key = `${next.x},${next.y}`
+      if (visited.has(key)) continue
+      visited.add(key)
+      queue.push({ point: next, parent: index })
+    }
+  }
+  return null
+}
+
 export function nearestDoor(
   point: Point,
   geometry: RoomGeometry,

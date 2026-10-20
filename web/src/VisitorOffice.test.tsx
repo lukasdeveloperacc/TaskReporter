@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
 import { readFileSync } from 'node:fs'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
@@ -400,3 +400,135 @@ describe('real Office visitor staff inspection', () => {
 function withinInspectorButton() {
   return [...screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).querySelectorAll('button')].find((button) => button.textContent === '닫기')!
 }
+
+describe('clicking staff to inspect work', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+  })
+  it.each(['ordinary', 'overview', 'visitor overview', 'paused visitor overview'])('opens work from the character and bubble in %s', async (mode) => {
+    const run = makeRun([activeBackendTask()])
+    render(<OfficeHarness run={run} />)
+    const visiting = mode.includes('visitor')
+    if (visiting) fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    if (mode.includes('overview')) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    if (mode.startsWith('paused')) fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    const employee = screen.getByRole('button', { name: 'backend-1 현재 업무 보기' })
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    for (const target of ['.office-person', '.office-bubble']) {
+      fireEvent.click(employee.querySelector(target)!)
+      const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' }, { timeout: 2000 })
+      expect(inspector.textContent).toContain('backend-1 업무')
+      expect(inspector.textContent).toContain('작업 · API 응답 연결')
+      const currentTab = within(inspector).getByRole('tab', { name: '현재 업무' })
+      expect(currentTab.getAttribute('aria-selected')).toBe('true')
+      await waitFor(() => expect(document.activeElement).toBe(currentTab))
+      expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('백엔드팀')
+      if (visiting) expect(characterFoot()).not.toEqual(VISITOR_SPAWN)
+      fireEvent.click(within(inspector).getByRole('tab', { name: '업무 기록' }))
+      fireEvent.click(within(inspector).getByRole('button', { name: '닫기' }))
+      expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+      await waitFor(() => expect(document.activeElement).toBe(visiting ? map : employee))
+    }
+    if (mode.startsWith('paused')) expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+  })
+
+  it('blocks staff clicks during an external dialog and after the run ends', () => {
+    const run = makeRun([activeBackendTask()])
+    const props = { run, asks: [], now, onOpenAsk: () => {} }
+    const { rerender } = render(<Office {...props} interactionBlocked />)
+    const employee = document.querySelector<HTMLButtonElement>('[data-employee="backend-1"]')!
+    expect(employee.disabled).toBe(true)
+    fireEvent.click(employee)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    rerender(<Office {...props} run={{ ...run, ended_at: stamp }} />)
+    expect(employee.disabled).toBe(true)
+    fireEvent.click(employee)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+  })
+})
+
+describe('walking to clicked staff', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+  })
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+  const advance = (ms: number) => act(() => { vi.advanceTimersByTime(ms) })
+
+  it('moves before opening work and replaces the destination on another click', () => {
+    const run = makeRun([activeBackendTask(), activeBackendTask({ id: 'FE', owner: 'frontend-1', title: '화면 구현' })])
+    render(<OfficeHarness run={run} />)
+    const start = characterFoot()
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    advance(200)
+    expect(characterFoot()).not.toEqual(start)
+    fireEvent.click(screen.getByRole('button', { name: 'frontend-1 현재 업무 보기' }))
+    expect(screen.getByText('frontend-1에게 이동 중…')).toBeTruthy()
+    advance(950)
+    expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('프론트엔드팀')
+    expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('frontend-1 업무')
+  })
+
+  it.each(['blocked', 'removed', 'ended', 'changed run'] as const)('cancels arrival when %s', (reason) => {
+    const run = makeRun([activeBackendTask()])
+    const props = { run, asks: [], now, onOpenAsk: () => {} }
+    const { rerender } = render(<Office {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    advance(200)
+    const updated = reason === 'removed' ? makeRun([])
+      : reason === 'ended' ? { ...run, ended_at: stamp }
+      : reason === 'changed run' ? { ...run, id: 'another-run' } : run
+    rerender(<Office {...props} run={updated} interactionBlocked={reason === 'blocked'} />)
+    advance(1000)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    expect(screen.queryByText('backend-1에게 이동 중…')).toBeNull()
+  })
+
+  it('cancels automatic walking when the user moves manually', () => {
+    render(<OfficeHarness run={makeRun([activeBackendTask()])} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    advance(200)
+    fireEvent.keyDown(screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' }), { key: 'ArrowRight', code: 'ArrowRight' })
+    const stopped = characterFoot()
+    advance(1000)
+    expect(characterFoot()).toEqual(stopped)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+  })
+
+  it('arrives inside the meeting room for staff seated near its bottom wall', () => {
+    const run = makeRun(['Planner', 'Architect', 'Critic'].map((owner) => activeBackendTask({ id: owner, owner, lane: 'plan' })))
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Critic 현재 업무 보기' }))
+    advance(1000)
+    expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('회의실')
+    expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('Critic 업무')
+  })
+
+  it('cancels on Escape without opening a report later', () => {
+    render(<OfficeHarness run={makeRun([activeBackendTask()])} />)
+    const employee = screen.getByRole('button', { name: 'backend-1 현재 업무 보기' })
+    fireEvent.click(employee)
+    advance(200)
+    fireEvent.keyDown(employee, { key: 'Escape' })
+    advance(1000)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    expect(screen.queryByText('backend-1에게 이동 중…')).toBeNull()
+  })
+
+  it('skips animation for reduced motion and cleans up pending movement on unmount', () => {
+    const run = makeRun([activeBackendTask()])
+    const first = render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    first.unmount()
+    advance(1000)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('백엔드팀')
+    expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' })).toBeTruthy()
+  })
+})

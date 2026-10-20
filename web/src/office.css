@@ -180,8 +180,20 @@
   z-index: 5;
   width: 52px;
   height: 65px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   transition: left 900ms cubic-bezier(.16, .9, .25, 1), top 900ms cubic-bezier(.16, .9, .25, 1);
 }
+.office-employee:hover:not(:disabled) .office-bubble,
+.office-employee--destination .office-bubble,
+.office-employee:focus-visible .office-bubble { outline: 3px solid #29675c; outline-offset: 2px; }
+.office-walk-status { display: block; padding: 6px 12px; color: #174d45; background: #fffdf6; font-size: 13px; }
+.office-representative--walking .office-person { animation: office-type 180ms steps(2, end) infinite alternate; }
 .office-employee--visitor { transition: none; }
 .office-representative {
   position: absolute;
@@ -367,7 +379,7 @@
 @media (prefers-reduced-motion: reduce) {
   .office-scroll { scroll-behavior: auto; }
   .office-employee, .office-paper--deliver, .office-paper--return { transition: none; }
-  .office-employee--typing .office-person { animation: none; }
+  .office-employee--typing .office-person, .office-representative--walking .office-person { animation: none; }
 }
 @media (max-width: 640px) {
   .office-scroll { max-height: 70vh; overscroll-behavior: contain; }
