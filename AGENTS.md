@@ -13,7 +13,6 @@
 - `server/`: Node 서버. Express 웹 API, MCP `report`·`ask`, 진행 patch 병합, 기획서 읽기, SQLite 저장. `fixtures/`는 progress 예제와 기대 결과.
 - `shared/`: 서버·웹 공용 계약(타입, `PORT`·`ASK_WAIT_MS`·`STALE_MS` 등).
 - `web/`: React 앱. `src/`는 로비·사무실·직접 둘러보기 화면과 `roles.json`, `public/sprites/`는 Kenney 픽셀 에셋.
-- `skills/office-basic-team/`: 원본 basic-team을 Office로 보고하게 하는 스킬.
 - `scripts/`: `golden.sh`(원본 progress.py와 병합 결과 비교), `replay.ts`(MCP fixture·ask 재생).
 
 테스트는 별도 폴더 없이 각 소스 옆의 `*.test.ts(x)`에 둔다.
