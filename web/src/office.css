@@ -91,6 +91,9 @@
   background-size: 48px 48px, 48px 48px, 96px 96px;
   box-shadow: 0 4px 9px rgb(37 40 30 / 17%);
 }
+.office-scene--corridor .office-room { background-color: #ad966c; background-image: none; box-shadow: 0 4px 9px rgb(37 40 30 / 17%); }
+.office-scene--room .office-room:not(.office-room--active) { background-color: #ad966c; background-image: none; }
+.office-scene--room .office-room:not(.office-room--active) h3 { opacity: .72; }
 .office-room::after {
   position: absolute;
   z-index: 3;
@@ -122,6 +125,21 @@
   line-height: 1.2;
   letter-spacing: -.02em;
 }
+.office-door-sign {
+  position: absolute;
+  right: 50%;
+  bottom: -38px;
+  z-index: 4;
+  padding: 3px 7px;
+  transform: translateX(50%);
+  border: 2px solid #67533b;
+  background: #fff8e8;
+  color: #172c35;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.office-room--active .office-door-sign { bottom: 10px; }
 .office-entry {
   position: absolute;
   left: 688px;
@@ -375,6 +393,18 @@
 .visitor-controls button:focus-visible, .visitor-picker button:focus-visible, .visitor-inspector button:focus-visible { outline: 3px solid #29675c; outline-offset: 2px; }
 .visitor-directions { display: flex; gap: 3px; }
 .visitor-directions button { min-width: 44px; font-size: 18px; font-weight: 800; }
+.room-minimap { box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) 96px; align-items: center; gap: 7px 10px; width: min(100%, 300px); min-height: 104px; margin-left: auto; padding: 5px 7px; border: 1px solid #8c8069; background: #eae3d3; }
+.room-minimap__location, .room-minimap__destination { grid-column: 1; margin: 0; color: #173d39; font-size: 12px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.room-minimap__destination { color: #70461f; }
+.room-minimap__map { grid-column: 2; grid-row: 1 / span 2; display: block; width: 96px; height: 100px; overflow: visible; }
+.room-minimap__corridor { fill: #dfd4bb; stroke: #6d604a; stroke-width: 8; }
+.room-minimap__room { fill: #bca477; stroke: #514633; stroke-width: 9; }
+.room-minimap__room--active { fill: #6fa69a; stroke: #194f48; stroke-width: 15; }
+.room-minimap__room--target { stroke: #b56826; stroke-width: 15; }
+.room-minimap__door { stroke: #fff8e8; stroke-width: 18; }
+.room-minimap__player { fill: #a63b2e; stroke: #fffdf6; stroke-width: 1.5; }
+.room-minimap__destination-marker { fill: none; stroke: #b56826; stroke-width: 8; stroke-dasharray: 16 12; }
+.visitor-guidance { flex: 1 1 100%; color: #174d45; font-weight: 800; }
 .visitor-picker, .visitor-inspector { position: fixed; z-index: 1002; top: 50%; left: 50%; display: grid; width: min(420px, calc(100vw - 32px)); max-height: min(80vh, 700px); overflow: auto; gap: 8px; padding: 18px; transform: translate(-50%, -50%); border: 2px solid #67533b; background: #f4f1e8; color: #172c35; box-shadow: 0 12px 40px rgb(21 32 28 / 35%); }
 .visitor-picker h2, .visitor-inspector h2 { margin: 0 0 4px; font-size: 20px; }
 .visitor-picker button { text-align: left; }
@@ -397,4 +427,8 @@
   .visitor-inspector { max-height: min(85dvh, calc(100dvh - 32px)); padding: 18px; }
   .visitor-inspector [role="tabpanel"] > p, .visitor-inspector [role="tabpanel"] li > p:last-of-type { font-size: 18px; }
   .visitor-inspector [role="tabpanel"] h3, .visitor-inspector [role="tabpanel"] h4 { font-size: 22px; }
+  .room-minimap { grid-template-columns: minmax(0, 1fr) 80px; width: min(100%, 250px); min-height: 90px; }
+  .room-minimap__map { width: 80px; height: 84px; }
+  .visitor-controls { gap: 5px; }
+  .visitor-directions button { min-width: 42px; }
 }

@@ -6,7 +6,8 @@ import App from './App.tsx'
 import { getDoc, getState, subscribe } from './api.ts'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
 import roles from './roles.json' with { type: 'json' }
-import { moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
+import { roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
+import { moveWithinArea, nearestDoor } from './roomNavigation.ts'
 
 vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn() }))
 
@@ -63,31 +64,42 @@ const directionKeys: Record<Direction, { key: string; code: string }> = {
   right: { key: 'ArrowRight', code: 'ArrowRight' },
 }
 
-function routeTo(start: Point, target: Point): Direction[] {
+type RouteStep = { type: 'move'; direction: Direction } | { type: 'door' }
+
+function routeTo(start: Point, target: Point): RouteStep[] {
   const geometry = roomGeometry(roles.departments)
   const key = (point: Point) => `${point.x},${point.y}`
   const startKey = key(start)
   const targetKey = key(target)
   const queue = [start]
-  const previous = new Map<string, { key: string; direction: Direction }>()
+  const previous = new Map<string, { key: string; step: RouteStep }>()
   const visited = new Set([startKey])
   for (let index = 0; index < queue.length && !visited.has(targetKey); index += 1) {
     const point = queue[index]
     for (const direction of ['up', 'down', 'left', 'right'] as const) {
-      const next = moveVisitor(point, direction, geometry)
+      const next = moveWithinArea(point, direction, geometry)
       const nextKey = key(next)
       if (visited.has(nextKey)) continue
       visited.add(nextKey)
-      previous.set(nextKey, { key: key(point), direction })
+      previous.set(nextKey, { key: key(point), step: { type: 'move', direction } })
       queue.push(next)
+    }
+    const door = nearestDoor(point, geometry)
+    if (door) {
+      const nextKey = key(door.destination)
+      if (!visited.has(nextKey)) {
+        visited.add(nextKey)
+        previous.set(nextKey, { key: key(point), step: { type: 'door' } })
+        queue.push(door.destination)
+      }
     }
   }
   if (!visited.has(targetKey)) throw new Error(`No visitor route from ${startKey} to ${targetKey}`)
-  const route: Direction[] = []
+  const route: RouteStep[] = []
   let cursor = targetKey
   while (cursor !== startKey) {
     const step = previous.get(cursor)!
-    route.push(step.direction)
+    route.push(step.step)
     cursor = step.key
   }
   return route.reverse()
@@ -108,7 +120,7 @@ function visitorFoot(): Point {
 }
 
 function walkTo(map: HTMLElement, target: Point) {
-  for (const direction of routeTo(VISITOR_SPAWN, target)) fireEvent.keyDown(map, directionKeys[direction])
+  for (const step of routeTo(VISITOR_SPAWN, target)) fireEvent.keyDown(map, step.type === 'door' ? { key: 'Enter', code: 'Enter' } : directionKeys[step.direction])
 }
 
 describe('visitor elevator App integration', () => {
@@ -135,9 +147,9 @@ describe('visitor elevator App integration', () => {
     expect(screen.getByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '결재 창 닫기' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
 
-    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
-    const map = screen.getByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
+    const map = await screen.findByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
     const representative = () => document.querySelector('[data-office-role="representative"]') as HTMLElement
     expect(representative().style.left).toBe('142px')
     fireEvent.keyDown(map, { key: 'ArrowRight', code: 'ArrowRight' })
@@ -153,6 +165,7 @@ describe('visitor elevator App integration', () => {
 
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
     expect(await screen.findByRole('heading', { name: 'Beta 프로젝트' })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(screen.getByText('beta latest summary')).toBeTruthy()
     expect(screen.getByText('모델 · claude-opus')).toBeTruthy()
     expect(screen.getByText('노력 · high')).toBeTruthy()
@@ -173,12 +186,14 @@ describe('visitor elevator App integration', () => {
     const runPicker = screen.getByRole('combobox', { name: '진행 중 run' })
     fireEvent.change(runPicker, { target: { value: betaOlder.id } })
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaOlder.id}`))
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(await screen.findByText('Beta API 구현')).toBeTruthy()
     expect(document.querySelector('.office-ask')?.textContent).toContain('Beta 다른 run 승인 질문')
     expect(document.querySelector('.ask-ticket')?.textContent).toContain('Beta 다른 run 승인 질문')
 
     fireEvent.change(screen.getByRole('combobox', { name: '진행 중 run' }), { target: { value: betaLatest.id } })
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     await waitFor(() => expect(document.querySelector('.office-ask')).toBeNull())
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
 
@@ -194,6 +209,7 @@ describe('visitor elevator App integration', () => {
 
     window.history.back()
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(await screen.findByText('beta latest summary')).toBeTruthy()
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
     expect(representative().style.left).toBe('142px')
@@ -204,6 +220,7 @@ describe('visitor elevator App integration', () => {
     expect(await screen.findByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
     window.location.hash = `#/run/${betaOlder.id}`
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaOlder.id}`))
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(await screen.findByText('Beta API 구현')).toBeTruthy()
     expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
@@ -213,9 +230,7 @@ describe('visitor elevator App integration', () => {
 
   it('disables an elevator destination when a live snapshot empties it before selection', async () => {
     render(<App />)
-    const visitorButton = await screen.findByRole('button', { name: '직접 둘러보기' })
-    fireEvent.click(visitorButton)
-    const map = screen.getByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
+    const map = await screen.findByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
     fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
     const picker = await screen.findByRole('dialog', { name: '다른 프로젝트 층 선택' })
     await waitFor(() => expect(stateChanged).toBeTypeOf('function'))
@@ -238,8 +253,7 @@ describe('visitor elevator App integration', () => {
 
   it('moves from real staff inspection through overview into the real approval dialog without restoring stale Office focus', async () => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: '직접 둘러보기' }))
-    const map = screen.getByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
+    const map = await screen.findByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
     const staffTarget = employeePoint(alphaCurrent, 'frontend-alpha')
     walkTo(map, staffTarget)
     await waitFor(() => expect(visitorFoot()).toEqual(staffTarget))

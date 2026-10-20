@@ -3,11 +3,12 @@ import { useState } from 'react'
 import { readFileSync } from 'node:fs'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RunView, Task } from '../../shared/contract.ts'
+import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
 import roles from './roles.json' with { type: 'json' }
 import { moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
+import { moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
 
 const now = Date.parse('2026-10-19T12:00:00.000Z')
 const stamp = new Date(now).toISOString()
@@ -27,9 +28,9 @@ function makeRun(tasks: Task[], patch: Partial<RunView> = {}): RunView {
   }
 }
 
-function OfficeHarness({ run, projectRuns = [run] }: { run: RunView; projectRuns?: RunView[] }) {
+function OfficeHarness({ run, projectRuns = [run], asks = [] }: { run: RunView; projectRuns?: RunView[]; asks?: AskView[] }) {
   const [visitorEnabled, setVisitorEnabled] = useState(false)
-  return <Office run={run} projectRuns={projectRuns} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} />
+  return <Office run={run} projectRuns={projectRuns} asks={asks} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} />
 }
 
 const directionKeys: Record<Direction, { key: string; code: string }> = {
@@ -39,34 +40,47 @@ const directionKeys: Record<Direction, { key: string; code: string }> = {
   right: { key: 'ArrowRight', code: 'ArrowRight' },
 }
 
-function findRoute(start: Point, target: Point): Direction[] {
+type RouteStep = { type: 'move'; direction: Direction } | { type: 'door' }
+
+function findRoute(start: Point, target: Point, overview = false): RouteStep[] {
   const geometry = roomGeometry(roles.departments)
   const key = (point: Point) => `${point.x},${point.y}`
   const startKey = key(start)
   const targetKey = key(target)
   const queue = [start]
-  const previous = new Map<string, { key: string; direction: Direction }>()
+  const previous = new Map<string, { key: string; step: RouteStep }>()
   const visited = new Set([startKey])
   const directions: Direction[] = ['up', 'down', 'left', 'right']
 
   for (let index = 0; index < queue.length && !visited.has(targetKey); index += 1) {
     const point = queue[index]
     for (const direction of directions) {
-      const next = moveVisitor(point, direction, geometry)
+      const next = overview ? moveVisitor(point, direction, geometry) : moveWithinArea(point, direction, geometry)
       const nextKey = key(next)
       if (visited.has(nextKey)) continue
       visited.add(nextKey)
-      previous.set(nextKey, { key: key(point), direction })
+      previous.set(nextKey, { key: key(point), step: { type: 'move', direction } })
       queue.push(next)
+    }
+    if (!overview) {
+      const door = nearestDoor(point, geometry)
+      if (door) {
+        const nextKey = key(door.destination)
+        if (!visited.has(nextKey)) {
+          visited.add(nextKey)
+          previous.set(nextKey, { key: key(point), step: { type: 'door' } })
+          queue.push(door.destination)
+        }
+      }
     }
   }
 
   if (!visited.has(targetKey)) throw new Error(`No visitor route from ${startKey} to ${targetKey}`)
-  const route: Direction[] = []
+  const route: RouteStep[] = []
   let cursor = targetKey
   while (cursor !== startKey) {
     const step = previous.get(cursor)!
-    route.push(step.direction)
+    route.push(step.step)
     cursor = step.key
   }
   return route.reverse()
@@ -85,8 +99,8 @@ function characterFoot(): Point {
   return { x: Number.parseFloat(element.style.left) + 26, y: Number.parseFloat(element.style.top) + 48 }
 }
 
-function moveAlong(map: HTMLElement, route: Direction[]) {
-  for (const direction of route) fireEvent.keyDown(map, directionKeys[direction])
+function moveAlong(map: HTMLElement, route: RouteStep[]) {
+  for (const step of route) fireEvent.keyDown(map, step.type === 'door' ? { key: 'Enter', code: 'Enter' } : directionKeys[step.direction])
 }
 
 function activeBackendTask(patch: Partial<Task> = {}): Task {
@@ -98,7 +112,82 @@ describe('real Office visitor staff inspection', () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
   })
 
-  it('inspects a real employee, follows refreshed coordinates and clears stale owner details safely', async () => {
+  it('enters a team through its door, inspects its staff, then exits to the corridor', async () => {
+    const run = makeRun([activeBackendTask(), { id: 'FRONTEND-LIVE', owner: 'frontend-1', lane: 'build', status: '진행중', title: '컴포넌트 작업' }])
+    run.state.reviews = [{ round: 1, reviewer: 'frontend-1', verdict: 'PASS' }]
+    const ask: AskView = { id: 'ask-rep', run_id: run.id, question: '대표 결재', options: ['진행'], recommended: '진행', status: 'pending', answer: null }
+    render(<OfficeHarness run={run} asks={[ask]} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    expect(document.querySelector('.office-scene--corridor')).toBeTruthy()
+    expect(document.querySelector('.office-door-sign')?.textContent).toContain('Enter')
+    expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
+    expect(document.querySelector('.office-stamp')).toBeNull()
+    expect(document.querySelector('.office-ask')).toBeNull()
+    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '백엔드팀' }))
+    expect(screen.getByText(/백엔드팀 입구 · ↑ 북쪽/)).toBeTruthy()
+    expect(screen.getByText('목적지 · 백엔드팀')).toBeTruthy()
+    expect(document.querySelector('.room-minimap__room--target')).toBeTruthy()
+    expect(characterFoot()).toEqual(VISITOR_SPAWN)
+    fireEvent.click(screen.getByRole('button', { name: '백엔드팀' }))
+    expect(screen.queryByText('목적지 · 백엔드팀')).toBeNull()
+
+    const target = employeePoint(run, 'backend-1')
+    const route = findRoute(VISITOR_SPAWN, target)
+    expect(route.some((step) => step.type === 'door')).toBe(true)
+    moveAlong(map, route)
+    await waitFor(() => expect(characterFoot()).toEqual(target))
+    expect(document.querySelector('.office-scene--room')?.getAttribute('data-active-room')).toBe('백엔드팀')
+    expect(document.querySelectorAll('.office-employee')).toHaveLength(1)
+    expect(document.querySelector('[data-employee="frontend-1"]')).toBeNull()
+    expect(document.querySelector('.office-stamp')).toBeNull()
+    expect(document.querySelector('.office-ask')).toBeNull()
+    expect(screen.getByText('현재 위치 · 백엔드팀')).toBeTruthy()
+
+    fireEvent.keyDown(map, { key: 'Enter', code: 'Enter' })
+    const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
+    expect(inspector.textContent).toContain('backend-1 업무')
+    fireEvent.keyDown(inspector, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull())
+
+    moveAlong(map, findRoute(characterFoot(), VISITOR_SPAWN))
+    await waitFor(() => expect(characterFoot()).toEqual(VISITOR_SPAWN))
+    expect(document.querySelector('.office-scene--corridor')).toBeTruthy()
+    expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
+    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
+  })
+
+  it('lets J open nearby staff history at an exit and prevents a repeated Enter on the door button', async () => {
+    const run = makeRun([
+      activeBackendTask(),
+      activeBackendTask({ id: 'BACKEND-2', owner: 'backend-2' }),
+      activeBackendTask({ id: 'BACKEND-3', owner: 'backend-3' }),
+      activeBackendTask({ id: 'BACKEND-4', owner: 'backend-4' }),
+    ])
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    const exitThreshold = { x: 264, y: 696 }
+    moveAlong(map, findRoute(VISITOR_SPAWN, exitThreshold))
+    await waitFor(() => expect(characterFoot()).toEqual(exitThreshold))
+    const doorButton = screen.getByRole('button', { name: /퇴장 · 백엔드팀/ })
+    const repeatedEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })
+    doorButton.dispatchEvent(repeatedEnter)
+    expect(repeatedEnter.defaultPrevented).toBe(true)
+    expect(characterFoot()).toEqual(exitThreshold)
+
+    fireEvent.keyDown(map, { key: 'j', code: 'KeyJ' })
+    const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
+    expect(within(inspector).getByRole('tab', { name: '업무 기록' }).getAttribute('aria-selected')).toBe('true')
+    expect(characterFoot()).toEqual(exitThreshold)
+    fireEvent.keyDown(inspector, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull())
+    fireEvent.keyDown(map, { key: 'Enter', code: 'Enter' })
+    expect(characterFoot()).toEqual({ x: 264, y: 744 })
+  })
+
+  it('keeps an open staff report while that employee moves between rooms', async () => {
     const initial = makeRun([
       activeBackendTask(),
       { id: 'BACKEND-IDLE', owner: 'backend-2', lane: 'build', status: '완료', title: '완료된 정리' },
@@ -134,20 +223,19 @@ describe('real Office visitor staff inspection', () => {
     const updated = makeRun([activeBackendTask({ title: 'API 응답 연결과 검증', model: 'gpt-6.1-codex', effort: 'medium', lane: 'plan' }), initial.state.tasks![1]])
     const newPoint = employeePoint(updated, 'backend-1')
     const employee = () => document.querySelector('[data-employee="backend-1"]') as HTMLElement
-    const oldPosition = { left: employee().style.left, top: employee().style.top }
     rerender(<OfficeHarness run={updated} />)
     await waitFor(() => expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('API 응답 연결과 검증'))
     expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('모델 · gpt-6.1-codex')
     expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('노력 · medium')
-    expect({ left: employee().style.left, top: employee().style.top }).not.toEqual(oldPosition)
-    expect(employee().style.left).toBe(`${newPoint.x - 26}px`)
-    expect(employee().style.top).toBe(`${newPoint.y - 48}px`)
+    expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
 
     fireEvent.click(withinInspectorButton())
     expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
     const updatedRoute = findRoute(characterFoot(), newPoint)
     moveAlong(map, updatedRoute)
     await waitFor(() => expect(characterFoot()).toEqual(newPoint))
+    expect(employee().style.left).toBe(`${newPoint.x - 26}px`)
+    expect(employee().style.top).toBe(`${newPoint.y - 48}px`)
     fireEvent.keyDown(map, { key: 'Enter', code: 'Enter' })
     expect(await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })).toBeTruthy()
 
@@ -248,7 +336,7 @@ describe('real Office visitor staff inspection', () => {
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
     const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
     await waitFor(() => expect(document.activeElement).toBe(map))
-    moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-1')))
+    moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-1'), true))
     await waitFor(() => expect(characterFoot()).toEqual(employeePoint(run, 'backend-1')))
     fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
     const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
@@ -292,6 +380,7 @@ describe('real Office visitor staff inspection', () => {
     expect(employee().classList.contains('office-employee--visitor')).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
     expect(employee().classList.contains('office-employee--visitor')).toBe(true)
     const visitorBefore = { left: employee().style.left, top: employee().style.top }
     const visitorUpdate = makeRun([activeBackendTask({ lane: 'review', title: '리뷰로 이동' })])

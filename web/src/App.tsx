@@ -35,7 +35,7 @@ export default function App() {
   const [notice, setNotice] = useState<{ runId: string; path: string } | null>(null)
   const [selectedAskId, setSelectedAskId] = useState<string | null>(null)
   const [documentRevision, setDocumentRevision] = useState(0)
-  const [visitorEnabled, setVisitorEnabled] = useState(false)
+  const [visitorEnabled, setVisitorEnabled] = useState(() => Boolean(readRoute().runId))
   const snapshotRef = useRef(snapshot)
   const routeRef = useRef(route)
   snapshotRef.current = snapshot
@@ -72,7 +72,19 @@ export default function App() {
       }
     }, () => setDocumentRevision((revision) => revision + 1))
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
-    const onHashChange = () => { const nextRoute = readRoute(); setRoute(nextRoute); setSelectedAskId(null); if (!nextRoute.runId) setVisitorEnabled(false) }
+    const onHashChange = () => {
+      const previousRoute = routeRef.current
+      const nextRoute = readRoute()
+      const projectPathForRun = (runId: string | null) => runId
+        ? snapshotRef.current.projects.find((project) => project.runs.some((run) => run.id === runId))?.path ?? null
+        : null
+      const previousProjectPath = projectPathForRun(previousRoute.runId)
+      const nextProjectPath = projectPathForRun(nextRoute.runId)
+      setRoute(nextRoute)
+      setSelectedAskId(null)
+      if (!nextRoute.runId) setVisitorEnabled(false)
+      else if (nextProjectPath && nextProjectPath !== previousProjectPath) setVisitorEnabled(true)
+    }
     window.addEventListener('hashchange', onHashChange)
     return () => {
       unsubscribe()
@@ -88,7 +100,7 @@ export default function App() {
   const selectedAsk = snapshot.asks.find((ask) => ask.id === selectedAskId && ask.status === 'pending') ?? null
   const floorAsks = activeProject?.runs.flatMap((run) => snapshot.asks.filter((ask) => ask.run_id === run.id)) ?? []
   const endedRuns = activeProject?.runs.filter((run) => run.ended_at) ?? []
-  useEffect(() => { if (route.runId && !selectedRun) setVisitorEnabled(false) }, [route.runId, selectedRun])
+  useEffect(() => { if (!loading && !loadError && route.runId && !selectedRun) setVisitorEnabled(false) }, [loading, loadError, route.runId, selectedRun])
   const visitorFloors = orderProjectFloors(snapshot.projects).map(({ project, floorNumber }) => ({
     projectPath: project.path,
     name: project.name,
