@@ -182,6 +182,89 @@ describe('Office scene controls and coordinates', () => {
     expect(screen.getByRole('button', { name: /other/ })).toBeTruthy()
   })
 
+  it('navigates enabled elevator floors with arrows, Home and End, then activates the focused destination', () => {
+    const onVisitProject = vi.fn(() => true)
+    const floors = [
+      { projectPath: '/workspace/disabled', name: 'disabled', floorNumber: 1, status: '보고 없음', disabled: true, current: false },
+      { projectPath: '/workspace/current', name: 'current', floorNumber: 2, status: '근무 중', disabled: false, current: true },
+      { projectPath: '/workspace/alpha', name: 'alpha', floorNumber: 3, status: '근무 중', disabled: false, current: false },
+      { projectPath: '/workspace/beta', name: 'beta', floorNumber: 4, status: '종료', disabled: false, current: false },
+    ]
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled floors={floors} onVisitProject={onVisitProject} />)
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    floor.focus()
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+
+    const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
+    const alpha = screen.getByRole('button', { name: /alpha/ })
+    const beta = screen.getByRole('button', { name: /beta/ })
+    const close = screen.getByRole('button', { name: '닫기' })
+    const lobby = screen.getByRole('button', { name: '빌딩 로비로 돌아가기' })
+    expect(screen.getByText(/↑\/↓ 층 이동 · Home\/End 처음\/끝 · Enter 선택 · Esc 닫기/)).toBeTruthy()
+    expect(document.activeElement).toBe(alpha)
+
+    fireEvent.keyDown(alpha, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(beta)
+    fireEvent.keyDown(beta, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(lobby)
+    fireEvent.keyDown(lobby, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(alpha)
+    fireEvent.keyDown(alpha, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'End' })
+    expect(document.activeElement).toBe(lobby)
+    fireEvent.keyDown(lobby, { key: 'Home' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(beta, { key: 'ArrowDown', ctrlKey: true })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'ArrowDown', isComposing: true })
+    expect(document.activeElement).toBe(close)
+    expect(picker).toBeTruthy()
+
+    // Activation remains the button's native click behavior; the picker does not synthesize clicks.
+    const repeatedEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })
+    fireEvent(alpha, repeatedEnter)
+    expect(repeatedEnter.defaultPrevented).toBe(false)
+    const space = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+    fireEvent(alpha, space)
+    expect(space.defaultPrevented).toBe(false)
+    expect(onVisitProject).not.toHaveBeenCalled()
+    fireEvent.click(beta)
+    expect(onVisitProject).toHaveBeenCalledWith('/workspace/beta')
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+  })
+
+  it('focuses Lobby when no other floor is available and closes the picker without dismissing overview', () => {
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled floors={[
+      { projectPath: '/workspace/current', name: 'current', floorNumber: 1, status: '근무 중', disabled: false, current: true },
+      { projectPath: '/workspace/missing', name: 'missing', floorNumber: 2, status: '보고 없음', disabled: true, current: false },
+    ]} />)
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    floor.focus()
+    fireEvent.keyDown(floor, { key: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'ArrowUp' })
+    fireEvent.keyDown(floor, { key: 'Enter' })
+
+    const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
+    const lobby = screen.getByRole('button', { name: '빌딩 로비로 돌아가기' })
+    const close = screen.getByRole('button', { name: '닫기' })
+    expect(document.activeElement).toBe(lobby)
+    fireEvent.keyDown(lobby, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(lobby)
+    fireEvent.keyDown(lobby, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    expect(picker).toBeTruthy()
+  })
+
   it('keeps controls paused after closing an inspection and resumes by explicit action', () => {
     render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled onVisitorEnabledChange={() => {}} />)
     const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })

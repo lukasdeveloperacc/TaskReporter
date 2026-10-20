@@ -198,6 +198,37 @@ describe('real Office visitor staff inspection', () => {
     expect(screen.queryByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeNull()
   })
 
+  it('uses Enter to advance current work to history, then closes and resumes map movement', async () => {
+    const run = makeRun([activeBackendTask()])
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-1')))
+    await waitFor(() => expect(characterFoot()).toEqual(employeePoint(run, 'backend-1')))
+    fireEvent.keyDown(map, { key: 'Enter', code: 'Enter' })
+
+    const inspector = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
+    expect(inspector.textContent).toContain('Enter 기록 → Enter 닫고 계속')
+    const current = within(inspector).getByRole('tab', { name: '현재 업무' })
+    await waitFor(() => expect(document.activeElement).toBe(current))
+    fireEvent.keyDown(current, { key: 'Enter', code: 'Enter' })
+    const history = within(inspector).getByRole('tab', { name: '업무 기록' })
+    expect(history.getAttribute('aria-selected')).toBe('true')
+    await waitFor(() => expect(document.activeElement).toBe(history))
+
+    fireEvent.keyDown(history, { key: 'Enter', code: 'Enter', repeat: true })
+    fireEvent.keyDown(history, { key: 'Enter', code: 'Enter', ctrlKey: true })
+    fireEvent.keyDown(history, { key: 'Enter', code: 'Enter', isComposing: true })
+    expect(screen.getByRole('complementary', { name: '직원 업무 살펴보기' })).toBeTruthy()
+    fireEvent.keyDown(history, { key: 'Enter', code: 'Enter' })
+    expect(screen.queryByRole('complementary', { name: '직원 업무 살펴보기' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(map))
+
+    const before = characterFoot()
+    fireEvent.keyDown(map, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(characterFoot()).not.toEqual(before)
+  })
+
   it.each(['removed', 'ended'] as const)('keeps the report panel keyboard usable when its employee is %s in an open overview', async (disposition) => {
     const run = makeRun([activeBackendTask()])
     const { rerender } = render(<OfficeHarness run={run} />)
