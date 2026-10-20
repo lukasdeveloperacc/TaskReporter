@@ -32,7 +32,29 @@ ln -s "$PWD/skills/office-basic-team" "$HOME/.claude/skills/office-basic-team"
 MCP_TOOL_TIMEOUT=325000 claude
 ```
 
-기존 링크가 있으면 설치 위치를 확인한 뒤 사용하세요. 원본 lukas-plugin `basic-team`도 설치되어 있어야 합니다. Claude Code에서 `/office-basic-team <작업 요청>`으로 실행하거나 같은 스킬로 기존 작업을 재개합니다. Codex용으로 설치하려면 `mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"` 후 해당 디렉터리에 동일한 skill 디렉터리를 링크하고 `$office-basic-team`을 호출합니다. 원본 basic-team은 수정하지 않습니다.
+기존 링크가 있으면 설치 위치를 확인한 뒤 사용하세요. 원본 lukas-plugin `basic-team`도 설치되어 있어야 합니다. Claude Code에서 `/office-basic-team <작업 요청>`으로 실행하거나 같은 스킬로 기존 작업을 재개합니다. 원본 basic-team은 수정하지 않습니다.
+
+## Codex 연결
+
+저장소에서 다음 명령으로 Docker의 같은 MCP 서버와 스킬을 등록합니다.
+
+```sh
+codex mcp add office --url http://127.0.0.1:4780/mcp
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+ln -s "$PWD/skills/office-basic-team" "${CODEX_HOME:-$HOME/.codex}/skills/office-basic-team"
+```
+
+`${CODEX_HOME:-$HOME/.codex}/config.toml`의 생성된 `office` 항목에 도구 제한 시간을 추가합니다. 서버의 295초 결재 대기보다 길어야 합니다. 단위는 초입니다. [Codex MCP 설정](https://developers.openai.com/codex/mcp/)을 참고하세요.
+
+```toml
+[mcp_servers.office]
+url = "http://127.0.0.1:4780/mcp"
+tool_timeout_sec = 325
+```
+
+등록 후 새 Codex 세션에서 `$office-basic-team <작업 요청>`을 사용합니다. 이미 실행 중인 세션은 MCP와 스킬을 다시 불러오도록 재시작합니다. 서버는 Docker가 실행하며 클라이언트는 HTTP로 연결합니다. 작업할 저장소에서 스킬을 호출하면 그 저장소가 프로젝트 층으로 보고됩니다. 일반 `basic-team` 호출에는 Office 보고가 자동으로 추가되지 않습니다.
+
+## 진행 보고와 결재
 
 `report`가 진행을 보내고 `ask`가 대표실에 결재 선택지를 만듭니다. 기본 대기는 295,000ms이며 답이 없으면 `pending`과 `ask_id`를 반환합니다. 스킬은 같은 id로 재호출합니다. 터미널에서 답하려면 Esc로 도구 대기를 끊고 채팅에 답하세요. 리더가 다음 report의 `close_ask_ids`로 앱의 서류를 닫습니다. 기획서 변경 diff가 보고되면 스킬이 재계획 여부를 묻습니다.
 
