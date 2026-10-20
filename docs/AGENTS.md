@@ -4,23 +4,27 @@
 
 ## 문서 구성
 
-고정 문서 5개와 `requirements/`, `screens/`, `changes/`만 사용한다. 고정 문서는 MVP 이후에도 같은 파일을 갱신하며, 버전별로 복사하지 않는다. 아래 구성은 관리 기준이며, 아직 결정되지 않은 내용을 채우기 위해 빈 문서나 추측성 내용을 만들지 않는다.
+고정 문서 5개와 `requirements/`, `changes/`, 필요할 때의 `screens/`만 사용한다. 고정 문서는 MVP 이후에도 같은 파일을 갱신하며, 버전별로 복사하지 않는다. 아래는 현재 구성이며, 아직 결정되지 않은 내용을 채우기 위해 빈 문서나 추측성 내용을 만들지 않는다. 각 문서의 진행 상태는 문서 첫머리의 `상태:` 줄에서 확인한다.
 
 ```text
 docs/
-├── AGENTS.md                 # 이 디렉터리의 문서 관리 규칙
-├── 0-PRODUCT.md
-├── 1-SYSTEM-ARCHITECTURE.md
-├── 2-DESIGN.md
-├── 3-DATABASE.md
-├── 4-USERFLOW.md
+├── AGENTS.md                         # 이 디렉터리의 문서 관리 규칙
+├── 0-PRODUCT.md                      # Office Team Reporter 제품 정의
+├── 1-SYSTEM-ARCHITECTURE.md          # server·web·shared 구성, 실행·검증 명령, 환경변수
+├── 2-DESIGN.md                       # 픽셀 사무실 UI 원칙과 토큰
+├── 3-DATABASE.md                     # SQLite 저장 정책
+├── 4-USERFLOW.md                     # 로비→층→사무실, 결재, 직접 둘러보기 흐름
 ├── requirements/
-│   └── <feature>.md
-├── screens/
-│   └── <screen>.html
-└── changes/
-    └── <number>-<change>.md
+│   ├── progress-office.md            # 진행 보고와 사무실(층·직원·검수·직접 둘러보기)
+│   ├── decisions-integration.md      # 결재(ask)와 basic-team 연동·HTML 폴백
+│   └── documents.md                  # 기획서 열람과 변경 공지
+├── changes/
+│   └── <3자리 번호>-<변경>.md        # 예: 001-office-team-reporter.md
+├── screens/                          # 아직 없음. 화면 정의 HTML이 필요할 때만 만든다
+└── inprogress/                       # 런타임 예외(아래 참고)
 ```
+
+새 변경 기록은 `changes/`의 마지막 번호 다음을 쓴다.
 
 `DATABASE.md`는 이 프로젝트의 번호 규칙에 맞춰 `3-DATABASE.md`로 관리한다. 기능별 문서 디렉터리 이름은 `specs/` 대신 `requirements/`를 사용한다. `OPERATIONS.md`는 만들지 않는다.
 
@@ -80,6 +84,6 @@ docs/
 
 ## TaskReporter 런타임 예외
 
-`docs/inprogress/`는 basic-team 및 office-basic-team의 실행 중 진행 HTML, run sidecar와 폴백 전체 상태를 보관하는 예외다. 제품·요구사항·화면 정의의 기준 문서로 사용하지 않는다. 기존 실행 파일을 문서 정리 과정에서 수정하거나 삭제하지 않는다. `screens/`는 실제 화면 정의 HTML이 필요할 때만 만들며 현재 구현 화면은 React 소스와 요구사항에서 확인한다.
+`docs/inprogress/`는 basic-team 및 office-basic-team(`skills/office-basic-team/`)이 run마다 남기는 진행 HTML(`<run>-<시각>.html`)과 sidecar·폴백 전체 상태(`<run>.office.json`)를 보관하는 예외다. 제품·요구사항·화면 정의의 기준 문서로 사용하지 않는다. 기존 실행 파일을 문서 정리 과정에서 수정하거나 삭제하지 않는다. `screens/`는 실제 화면 정의 HTML이 필요할 때만 만들며 현재 구현 화면은 React 소스와 요구사항에서 확인한다.
 
 제품 정의와 디자인 기준은 각각 `0-PRODUCT.md`, `2-DESIGN.md`에서만 관리한다. 루트에 중복 문서나 안내 파일을 두지 않는다.
