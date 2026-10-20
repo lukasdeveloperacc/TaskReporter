@@ -242,8 +242,8 @@ describe('visitor elevator App integration', () => {
     fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
     const inspector = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
     expect(inspector.textContent).toContain('frontend-alpha 업무')
-    const inspectorClose = within(inspector).getByRole('button', { name: '닫기' })
-    await waitFor(() => expect(document.activeElement).toBe(inspectorClose))
+    const currentReportTab = within(inspector).getByRole('tab', { name: '현재 업무' })
+    await waitFor(() => expect(document.activeElement).toBe(currentReportTab))
 
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
     expect(await screen.findByRole('dialog', { name: 'Alpha 현재 run 사무실' })).toBeTruthy()
@@ -258,7 +258,7 @@ describe('visitor elevator App integration', () => {
 
     fireEvent.click(within(approval).getByRole('button', { name: '결재 창 닫기' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeNull())
-    await waitFor(() => expect(document.activeElement).not.toBe(inspectorClose))
+    await waitFor(() => expect(document.activeElement).not.toBe(currentReportTab))
     expect(screen.queryByRole('complementary', { name: '직원 업무 살펴보기' })).toBeNull()
     expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))

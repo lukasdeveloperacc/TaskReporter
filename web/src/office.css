@@ -367,6 +367,8 @@
   image-rendering: pixelated;
 }
 .visitor-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 8px; border: 1px solid #b9b8a9; background: #f4f1e8; color: #172c35; font-size: 12px; }
+.visitor-controls--overview { flex: 0 0 auto; gap: 4px; padding: 4px 7px; }
+.visitor-controls--overview > span:first-child { font-size: 11px; line-height: 1.3; }
 .visitor-controls > span:first-child { flex: 1 1 100%; }
 .visitor-controls button, .visitor-picker button, .visitor-inspector button { min-height: 44px; padding: 8px 10px; border: 1px solid #73654c; background: #fffaf0; color: #172c35; cursor: pointer; }
 .visitor-controls button:disabled, .visitor-picker button:disabled { opacity: .55; cursor: not-allowed; }
@@ -378,3 +380,10 @@
 .visitor-picker button { text-align: left; }
 .visitor-inspector { position: fixed; z-index: 1001; top: auto; right: 16px; bottom: 16px; left: auto; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 620px); margin: 0; transform: none; }
 .visitor-inspector p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.visitor-inspector [role="tablist"] { display: flex; gap: 6px; margin: 8px 0; }
+.visitor-inspector [role="tab"] { min-height: 44px; padding: 7px 10px; border: 1px solid #73654c; background: #fffaf0; color: #172c35; cursor: pointer; }
+.visitor-inspector [role="tab"][aria-selected="true"] { border-color: #29675c; background: #29675c; color: #fffdf6; font-weight: 700; }
+.visitor-inspector [role="tab"]:focus-visible { outline: 3px solid #bf7839; outline-offset: 2px; }
+.visitor-inspector [role="tabpanel"] { overflow-wrap: anywhere; }
+.visitor-inspector [role="tabpanel"] > ul { display: grid; gap: 10px; margin: 8px 0; padding-left: 20px; }
+.visitor-inspector [role="tabpanel"] li > ul { display: grid; gap: 8px; margin-top: 6px; padding-left: 18px; }

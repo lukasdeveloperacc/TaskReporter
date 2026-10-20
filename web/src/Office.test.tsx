@@ -278,7 +278,7 @@ describe('Office scene controls and coordinates', () => {
     expect(css).toMatch(/\.office-scroll--visitor\s*\{[^}]*transition:\s*none;/)
   })
 
-  it('fits overview without visitor controls and keeps movement paused after every close path', async () => {
+  it('keeps the fitted overview walkable and guards its panels, pause controls, and approval focus', async () => {
     const scrollTo = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
     const { rerender } = render(<><button type="button">Approval dialog</button><Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
@@ -290,19 +290,31 @@ describe('Office scene controls and coordinates', () => {
     scrollTo.mockClear()
     fireEvent(window, new Event('resize'))
     expect(scrollTo).not.toHaveBeenCalled()
-    expect(document.querySelector('.visitor-controls')).toBeNull()
+    expect(document.querySelector('.visitor-controls')).not.toBeNull()
     expect(Number((document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale)).toBeCloseTo(700 / 1600)
-    const toggle = screen.getByRole('button', { name: '전체 보기 닫기' })
-    fireEvent.keyDown(screen.getByRole('button', { name: 'QA팀' }), { key: 'Escape' })
-    expect(document.activeElement).toBe(toggle)
     const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
     const before = avatar.style.top
-    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
-    expect(avatar.style.top).toBe(before)
-    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
     await waitFor(() => expect(document.activeElement).toBe(floor))
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).not.toBe(before)
+    const walked = avatar.style.top
+    fireEvent(window, new Event('resize'))
+    expect(scrollTo).not.toHaveBeenCalled()
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    await waitFor(() => expect(document.activeElement).toBe(floor))
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(walked)
+    fireEvent.keyDown(floor, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '관제실 확인 사무실' })).toBeNull()
+    expect(screen.getByRole('button', { name: '전체 보기' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
     const moved = avatar.style.top
 
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
@@ -314,6 +326,43 @@ describe('Office scene controls and coordinates', () => {
     rerender(<><button type="button">Approval dialog</button><Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
     expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
     expect(avatar.style.top).toBe(moved)
+  })
+
+  it('can activate exploration inside an open overview and use Space/F without moving the fitted camera', async () => {
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    const onVisitorEnabledChange = vi.fn()
+    const props = { run: makeRun(), asks: askList, now: Date.parse(stamp), onOpenAsk: () => {}, onVisitorEnabledChange }
+    const { rerender } = render(<Office {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    expect(onVisitorEnabledChange).toHaveBeenCalledWith(true)
+    rerender(<Office {...props} visitorEnabled />)
+    scrollTo.mockClear()
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    await waitFor(() => expect(document.activeElement).toBe(floor))
+    fireEvent.click(document.querySelector('.office-scene') as HTMLElement)
+    await waitFor(() => expect(document.activeElement).toBe(floor))
+    const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const start = avatar.style.top
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(start)
+    const walking = avatar.style.top
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
+    expect(screen.getByText('둘러보기 일시정지')).toBeTruthy()
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
+    await waitFor(() => expect(document.activeElement).toBe(floor))
+    fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(avatar.style.top).not.toBe(walking)
+    const scale = (document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale
+    expect(scrollTo).not.toHaveBeenCalled()
+    fireEvent.keyDown(floor, { key: 'f', code: 'KeyF' })
+    expect(screen.queryByRole('dialog', { name: '관제실 확인 사무실' })).toBeNull()
+    fireEvent.keyDown(floor, { key: 'f', code: 'KeyF' })
+    expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
+    expect((document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale).toBe(scale)
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, top: 0, behavior: 'instant' })
   })
 
   it('recenters on resize only while visitor movement is active', () => {

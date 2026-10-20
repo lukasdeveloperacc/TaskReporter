@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
 import { readFileSync } from 'node:fs'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
@@ -27,9 +27,9 @@ function makeRun(tasks: Task[], patch: Partial<RunView> = {}): RunView {
   }
 }
 
-function OfficeHarness({ run }: { run: RunView }) {
+function OfficeHarness({ run, projectRuns = [run] }: { run: RunView; projectRuns?: RunView[] }) {
   const [visitorEnabled, setVisitorEnabled] = useState(false)
-  return <Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} />
+  return <Office run={run} projectRuns={projectRuns} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} />
 }
 
 const directionKeys: Record<Direction, { key: string; code: string }> = {
@@ -162,18 +162,65 @@ describe('real Office visitor staff inspection', () => {
 
   it('shows no-current-task and missing metadata for an inspectable idle employee', async () => {
     const run = makeRun([{ id: 'BACKEND-DONE', owner: 'backend-2', lane: 'build', status: '완료', title: '완료된 작업' }])
-    render(<OfficeHarness run={run} />)
+    const previous = makeRun([{ id: 'BACKEND-OLD', owner: 'backend-2', lane: 'build', status: '완료', title: '이전 실행 업무' }], { id: 'visitor-staff-history', title: '이전 실행 보고', last_report_at: staleReport, ended_at: staleReport })
+    render(<OfficeHarness run={run} projectRuns={[run, previous]} />)
     fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
     const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
     moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-2')))
     await waitFor(() => expect(characterFoot()).toEqual(employeePoint(run, 'backend-2')))
+    fireEvent.keyDown(map, { key: 'j', code: 'KeyJ' })
+    const inspector = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
+    expect(screen.getByRole('tab', { name: '업무 기록' }).getAttribute('aria-selected')).toBe('true')
+    expect(inspector.textContent).toContain('이전 실행 업무')
+    const historyTab = screen.getByRole('tab', { name: '업무 기록' })
+    fireEvent.keyDown(historyTab, { key: 'r' })
+    expect(screen.getByRole('tab', { name: '현재 업무' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(screen.getByRole('tab', { name: '현재 업무' }), { key: 'j' })
+    expect(screen.getByRole('tab', { name: '업무 기록' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(screen.getByRole('tab', { name: '업무 기록' }), { key: 'r' })
+    expect(screen.getByRole('tab', { name: '현재 업무' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.click(withinInspectorButton())
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    expect(screen.getByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeTruthy()
+    fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
+    const currentInspector = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
+    expect(currentInspector.textContent).toContain('backend-2 업무')
+    expect(currentInspector.textContent).toContain('상태 · 근무 중')
+    expect(currentInspector.textContent).toContain('현재 진행 중인 작업이 없습니다.')
+    expect(currentInspector.textContent).toContain('모델 · 미보고')
+    expect(currentInspector.textContent).toContain('노력 · 미보고')
+    fireEvent.keyDown(screen.getByRole('tab', { name: '현재 업무' }), { key: 'Escape' })
+    expect(screen.queryByRole('complementary', { name: '직원 업무 살펴보기' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.keyDown(map, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeNull()
+  })
+
+  it.each(['removed', 'ended'] as const)('keeps the report panel keyboard usable when its employee is %s in an open overview', async (disposition) => {
+    const run = makeRun([activeBackendTask()])
+    const { rerender } = render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    await waitFor(() => expect(document.activeElement).toBe(map))
+    moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-1')))
+    await waitFor(() => expect(characterFoot()).toEqual(employeePoint(run, 'backend-1')))
     fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
     const inspector = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
-    expect(inspector.textContent).toContain('backend-2 업무')
-    expect(inspector.textContent).toContain('상태 · 근무 중')
-    expect(inspector.textContent).toContain('현재 진행 중인 작업이 없습니다.')
-    expect(inspector.textContent).toContain('모델 · 미보고')
-    expect(inspector.textContent).toContain('노력 · 미보고')
+    const currentTab = within(inspector).getByRole('tab', { name: '현재 업무' })
+    await waitFor(() => expect(document.activeElement).toBe(currentTab))
+
+    const latest = disposition === 'removed' ? makeRun([], { id: run.id }) : { ...run, ended_at: stamp }
+    rerender(<OfficeHarness run={latest} />)
+    const unavailable = await screen.findByRole('complementary', { name: '직원 업무 살펴보기' })
+    expect(unavailable.textContent).toContain('직원을 찾을 수 없습니다')
+    const close = within(unavailable).getByRole('button', { name: '닫기' })
+    await waitFor(() => expect(document.activeElement).toBe(close))
+    fireEvent.keyDown(close, { key: 'Escape' })
+    expect(screen.queryByRole('complementary', { name: '직원 업무 살펴보기' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeTruthy()
   })
 
   it('inspects an employee literally named elevator after walking to that employee', async () => {
@@ -219,5 +266,5 @@ describe('real Office visitor staff inspection', () => {
 })
 
 function withinInspectorButton() {
-  return screen.getByRole('complementary', { name: '직원 업무 살펴보기' }).querySelector('button')!
+  return [...screen.getByRole('complementary', { name: '직원 업무 살펴보기' }).querySelectorAll('button')].find((button) => button.textContent === '닫기')!
 }
