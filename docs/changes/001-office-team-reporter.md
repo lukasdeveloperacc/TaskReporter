@@ -10,7 +10,7 @@
 
 [제품](../0-PRODUCT.md) · [구조·명령](../1-SYSTEM-ARCHITECTURE.md) · [디자인](../2-DESIGN.md) · [저장소](../3-DATABASE.md) · [사용자 흐름](../4-USERFLOW.md) · [진행](../requirements/progress-office.md) · [결재](../requirements/decisions-integration.md) · [기획서](../requirements/documents.md)
 
-문서는 SDDMaker의 docs 역할 구분을 따라 5개 고정 문서와 기능별 requirements, 변경 기록으로 정리했다. 기존 디자인 원칙을 보존하고 루트 PRODUCT/DESIGN은 도구 호환 안내로 남겼다. 실제 별도 화면 시안이 없어 screens 디렉터리는 만들지 않았으며 basic-team의 docs/inprogress는 런타임 예외로 명시했다.
+문서는 SDDMaker의 docs 역할 구분을 따라 5개 고정 문서와 기능별 requirements, 변경 기록으로 정리했다. 기존 디자인 원칙을 보존하고 제품·디자인 문서는 docs에서만 관리한다. 실제 별도 화면 시안이 없어 screens 디렉터리는 만들지 않았으며 basic-team의 docs/inprogress는 런타임 예외로 명시했다.
 
 ## 구현과 검증 결과 · 2026-10-19
 

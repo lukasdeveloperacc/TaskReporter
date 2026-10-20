@@ -82,4 +82,4 @@ docs/
 
 `docs/inprogress/`는 basic-team 및 office-basic-team의 실행 중 진행 HTML, run sidecar와 폴백 전체 상태를 보관하는 예외다. 제품·요구사항·화면 정의의 기준 문서로 사용하지 않는다. 기존 실행 파일을 문서 정리 과정에서 수정하거나 삭제하지 않는다. `screens/`는 실제 화면 정의 HTML이 필요할 때만 만들며 현재 구현 화면은 React 소스와 요구사항에서 확인한다.
 
-루트 `PRODUCT.md`와 `DESIGN.md`는 도구 호환성을 위한 안내 파일이며, 현재 기준은 각각 `0-PRODUCT.md`, `2-DESIGN.md`다.
+제품 정의와 디자인 기준은 각각 `0-PRODUCT.md`, `2-DESIGN.md`에서만 관리한다. 루트에 중복 문서나 안내 파일을 두지 않는다.
