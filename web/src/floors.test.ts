@@ -12,8 +12,10 @@ describe('orderProjectFloors', () => {
     expect(labels([...source].reverse())).toEqual(labels(source))
   })
 
-  it('filters hidden projects after assigning stable floor numbers', () => {
+  it('renumbers visible projects contiguously and restores numbers when unhidden', () => {
     const source = [project('/z', 'alpha'), { ...project('/b', 'zeta'), hidden: true }, project('/a', 'beta')]
-    expect(orderProjectFloors(source).map(({ project: item, floorNumber }) => [item.path, floorNumber])).toEqual([['/a', 3], ['/z', 1]])
+    expect(orderProjectFloors(source).map(({ project: item, floorNumber }) => [item.path, floorNumber])).toEqual([['/a', 2], ['/z', 1]])
+    expect(orderProjectFloors(source.map((item) => ({ ...item, hidden: false }))).map(({ floorNumber }) => floorNumber)).toEqual([3, 2, 1])
+    expect(orderProjectFloors(source.map((item) => ({ ...item, hidden: true })))).toEqual([])
   })
 })
