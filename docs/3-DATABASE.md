@@ -24,4 +24,4 @@ Compose의 `office-data` volume에 DB를 보관하며 컨테이너 재시작과 
 
 ## 층 숨김 저장
 
-[층 숨김 요구사항](requirements/progress-office.md#building-층-숨김복원)에 따라 `projects.hidden INTEGER NOT NULL DEFAULT 0`을 저장한다. 시작 시 `PRAGMA table_info`로 기존 열을 확인하고 없을 때만 추가하여 기존 DB를 보존한다. 새 프로젝트는 표시 상태이며 report의 프로젝트 upsert는 이미 저장된 hidden을 바꾸지 않는다. 숨김은 표시 정책으로만 적용하고 run·ask·문서 연결과 상태 snapshot의 프로젝트는 삭제하거나 제외하지 않는다. 숨김 상태는 DB 재개방 후에도 유지한다. 실제 반영·검증 결과는 [변경 007](changes/007-floor-visibility.md)을 따른다.
+[층 숨김 요구사항](requirements/progress-office.md#building-층-숨김복원)에 따라 `projects.hidden INTEGER NOT NULL DEFAULT 0`을 저장한다. 시작 시 `PRAGMA table_info`로 기존 열을 확인하고 없을 때만 추가하여 기존 DB를 보존한다. 새 프로젝트는 표시 상태이며 프로젝트 upsert 자체는 hidden을 보존하지만, 종료되지 않은 작업의 report 성공 시 같은 트랜잭션에서 hidden을 해제한다. 숨김은 표시 정책으로만 적용하고 run·ask·문서 연결과 상태 snapshot의 프로젝트는 삭제하거나 제외하지 않는다. 숨김 상태는 DB 재개방 후에도 유지한다. 실제 반영·검증 결과는 [변경 007](changes/007-floor-visibility.md)을 따른다.

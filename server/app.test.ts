@@ -442,7 +442,7 @@ describe('office app', () => {
     await client.close()
   })
 
-  it('validates visibility changes, emits changed, and preserves hidden projects and pending asks across reports', async () => {
+  it('validates visibility changes, emits changed, and restores active projects on reports while preserving history and pending asks', async () => {
     const { base, client } = await start({ askWaitMs: 2_000 })
     const projectPath = join(workspace, 'hidden-project')
     const runId = String(parseTool(await report(client, base, { project_path: projectPath, patch: {} }))!.run_id)
@@ -472,10 +472,12 @@ describe('office app', () => {
     expect(await hidden.json()).toEqual({ ok: true })
     expect(new TextDecoder().decode((await reader.read()).value).includes('event: changed')).toBe(true)
     await report(client, base, { project_path: projectPath, run_id: runId, patch: { summary: 'existing run updated' } })
+    expect(((await (await fetch(`${base}/api/state`)).json()) as typeof snapshot)!.projects.find((project) => project.path === projectPath)?.hidden).toBe(false)
+    await patchVisibility({ project_path: projectPath, hidden: true })
     await report(client, base, { project_path: projectPath, patch: { summary: 'new run' } })
     snapshot = await (await fetch(`${base}/api/state`)).json() as typeof snapshot
     const hiddenProject = snapshot!.projects.find((project) => project.path === projectPath)!
-    expect(hiddenProject.hidden).toBe(true)
+    expect(hiddenProject.hidden).toBe(false)
     expect(hiddenProject.runs.map((run) => run.id)).toContain(runId)
     expect(hiddenProject.runs).toHaveLength(2)
     expect(snapshot!.asks).toContainEqual(expect.objectContaining({ id: askId, status: 'pending' }))
@@ -486,6 +488,22 @@ describe('office app', () => {
     expect(restored.status).toBe(200)
     expect(((await (await fetch(`${base}/api/state`)).json()) as typeof snapshot)!.projects.find((project) => project.path === projectPath)?.hidden).toBe(false)
     await reader.cancel()
+    await client.close()
+  })
+
+  it('keeps terminal reports hidden and restores a resumed run only after a successful report', async () => {
+    const { base, client } = await start()
+    const projectPath = join(workspace, 'resumed-project')
+    const runId = String(parseTool(await report(client, base, { project_path: projectPath, patch: { stage: '완료' } }))!.run_id)
+    await fetch(`${base}/api/projects/visibility`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project_path: projectPath, hidden: true }) })
+    const isHidden = async () => ((await (await fetch(`${base}/api/state`)).json()) as { projects: { path: string; hidden: boolean }[] }).projects.find((project) => project.path === projectPath)!.hidden
+    await report(client, base, { project_path: projectPath, run_id: runId, patch: { summary: 'archived note' } })
+    expect(await isHidden()).toBe(true)
+    const invalid = await report(client, base, { project_path: projectPath, run_id: runId, patch: { stage: '구현', tasks: [{ id: 'unfinished', status: '완료', todos: [{ id: 'todo', done: false }] }] } })
+    expect(invalid.isError).toBe(true)
+    expect(await isHidden()).toBe(true)
+    await report(client, base, { project_path: projectPath, run_id: runId, patch: { stage: '구현' } })
+    expect(await isHidden()).toBe(false)
     await client.close()
   })
 

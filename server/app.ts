@@ -191,6 +191,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     db.transaction(() => {
       for (const [id, answer] of duplicateReplies) db.replyCheck(id, answer, stamp)
       db.upsertProject(projectPath, inWorkspace(projectPath, root), stamp)
+      if (!ended) db.setProjectHidden(projectPath, false)
       if (!existing) {
         const created = db.createRun(projectPath, state, stamp)
         run.id = created.id
