@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -31,6 +32,34 @@ describe('store', () => {
     expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/first', in_workspace: true })
     expect(db.listActiveRuns()).toEqual([])
     expect(db.snapshot(() => true).asks).toEqual([])
+  })
+
+  it('adds hidden to a legacy database and preserves visibility across reopen and upsert', () => {
+    db.close()
+    const file = join(dir, 'legacy.db')
+    const legacy = new DatabaseSync(file)
+    legacy.exec(`CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT NOT NULL, in_workspace INTEGER NOT NULL, created_at TEXT NOT NULL);
+      INSERT INTO projects VALUES ('/workspace/old', 'old', 1, '1970-01-01T00:00:00.000Z');`)
+    legacy.close()
+    db = openStore(file)
+    expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/old', hidden: false })
+    expect(db.setProjectHidden('/workspace/old', true)).toBe(true)
+    db.upsertProject('/workspace/old', false, 1)
+    db.close()
+    db = openStore(file)
+    expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/old', hidden: true, in_workspace: false })
+    expect(db.setProjectHidden('/workspace/missing', true)).toBe(false)
+  })
+
+  it('keeps hidden projects, run history, and asks in snapshots', () => {
+    const run = db.createRun('/workspace/first', {}, 0)
+    const ask = db.createAsk(run.id, '?', ['Yes'], undefined, 0)
+    db.setProjectHidden('/workspace/first', true)
+    db.upsertProject('/workspace/first', true, 1)
+    expect(db.snapshot(() => false)).toMatchObject({
+      projects: [{ path: '/workspace/first', hidden: true, runs: [{ id: run.id }] }],
+      asks: [{ id: ask, status: 'pending' }],
+    })
   })
 
   it('groups all history by project, sorts newest first with id tie-break, and returns detached state', () => {

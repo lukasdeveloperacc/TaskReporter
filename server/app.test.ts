@@ -72,7 +72,7 @@ describe('office app', () => {
   }
 
   it('creates projects and runs, groups a second project, and replays the full progress.py golden', async () => {
-    const { base, client } = await start()
+    const { base, client } = await start({ askWaitMs: 2_000 })
     const first = parseTool(await report(client, base, { title: fixtureTitle, patch: patches[0] }))!
     const runId = String(first.run_id)
     expect(runId).toBeTruthy()
@@ -107,6 +107,53 @@ describe('office app', () => {
     const invalidExisting = await report(client, base, { project_path: join(workspace, 'existing'), run_id: runId, patch: { extra: true } })
     expect(invalidExisting.isError).toBe(true)
     expect(await (await fetch(`${base}/api/state`)).json()).toEqual(before)
+    await client.close()
+  })
+
+  it('validates visibility changes, emits changed, and preserves hidden projects and pending asks across reports', async () => {
+    const { base, client } = await start({ askWaitMs: 2_000 })
+    const projectPath = join(workspace, 'hidden-project')
+    const runId = String(parseTool(await report(client, base, { project_path: projectPath, patch: {} }))!.run_id)
+    const askPromise = ask(client, { run_id: runId, question: 'Still needed?', options: ['Yes'] })
+    let snapshot: { projects: { path: string; hidden?: boolean; runs: { id: string }[] }[]; asks: { id: string }[] } | undefined
+    for (let attempt = 0; attempt < 50 && !snapshot?.asks.length; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      snapshot = await (await fetch(`${base}/api/state`)).json() as typeof snapshot
+    }
+    const askId = snapshot!.asks[0]!.id
+    const patchVisibility = (body: unknown) => fetch(`${base}/api/projects/visibility`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+    expect((await patchVisibility({ project_path: projectPath })).status).toBe(400)
+    expect((await patchVisibility(null)).status).toBe(400)
+    expect((await patchVisibility({ project_path: 3, hidden: true })).status).toBe(400)
+    expect((await patchVisibility({ project_path: '', hidden: true })).status).toBe(400)
+    expect((await patchVisibility({ project_path: projectPath, hidden: 'true' })).status).toBe(400)
+    expect((await patchVisibility({ project_path: join(workspace, 'unknown'), hidden: true })).status).toBe(404)
+    expect(((await (await fetch(`${base}/api/state`)).json()) as typeof snapshot)!.projects.map((project) => project.path)).not.toContain(join(workspace, 'unknown'))
+
+    const events = await fetch(`${base}/api/events`)
+    const reader = events.body!.getReader()
+    await reader.read()
+    const hidden = await patchVisibility({ project_path: projectPath, hidden: true })
+    expect(hidden.status).toBe(200)
+    expect(await hidden.json()).toEqual({ ok: true })
+    expect(new TextDecoder().decode((await reader.read()).value).includes('event: changed')).toBe(true)
+    await report(client, base, { project_path: projectPath, run_id: runId, patch: { summary: 'existing run updated' } })
+    await report(client, base, { project_path: projectPath, patch: { summary: 'new run' } })
+    snapshot = await (await fetch(`${base}/api/state`)).json() as typeof snapshot
+    const hiddenProject = snapshot!.projects.find((project) => project.path === projectPath)!
+    expect(hiddenProject.hidden).toBe(true)
+    expect(hiddenProject.runs.map((run) => run.id)).toContain(runId)
+    expect(hiddenProject.runs).toHaveLength(2)
+    expect(snapshot!.asks).toContainEqual(expect.objectContaining({ id: askId, status: 'pending' }))
+    const answer = await fetch(`${base}/api/asks/${askId}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answer: 'Yes' }) })
+    expect(answer.status).toBe(200)
+    expect(parseTool(await askPromise)).toMatchObject({ status: 'answered', answer: 'Yes', ask_id: askId })
+    const restored = await patchVisibility({ project_path: projectPath, hidden: false })
+    expect(restored.status).toBe(200)
+    expect(((await (await fetch(`${base}/api/state`)).json()) as typeof snapshot)!.projects.find((project) => project.path === projectPath)?.hidden).toBe(false)
+    await reader.cancel()
     await client.close()
   })
 

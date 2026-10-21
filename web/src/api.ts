@@ -18,6 +18,14 @@ export function getState(): Promise<StateSnapshot> {
   return request<StateSnapshot>('/api/state')
 }
 
+export function setProjectVisibility(path: string, hidden: boolean): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/projects/visibility', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ project_path: path, hidden }),
+  })
+}
+
 export function answerAsk(id: string, answer: string): Promise<{ ok: true }> {
   return request<{ ok: true }>(`/api/asks/${encodeURIComponent(id)}/answer`, {
     method: 'POST',

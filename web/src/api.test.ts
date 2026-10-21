@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { subscribe } from './api.ts'
+import { setProjectVisibility, subscribe } from './api.ts'
 
 class MockEventSource {
   static instances: MockEventSource[] = []
@@ -58,5 +58,28 @@ describe('subscribe', () => {
     subscribe(vi.fn(), onDocChanged)
     MockEventSource.instances[0].emit('doc-changed', Object.assign(new Event('doc-changed'), { data: '{bad json' }))
     expect(onDocChanged).not.toHaveBeenCalled()
+  })
+})
+
+describe('setProjectVisibility', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('sends the project path and visibility in a PATCH request', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue({ ok: true }) })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(setProjectVisibility('/workspace/alpha', true)).resolves.toEqual({ ok: true })
+    expect(fetch).toHaveBeenCalledWith('/api/projects/visibility', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ project_path: '/workspace/alpha', hidden: true }),
+    })
+  })
+
+  it('surfaces a server error for retry handling in the lobby', async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, text: vi.fn().mockResolvedValue('project not found') })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(setProjectVisibility('/workspace/missing', false)).rejects.toThrow('project not found')
   })
 })

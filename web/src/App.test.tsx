@@ -3,10 +3,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AskView, ProjectView, RunView, StateSnapshot } from '../../shared/contract.ts'
 import App from './App.tsx'
-import { getDoc, getState, subscribe } from './api.ts'
+import { answerAsk, getDoc, getState, setProjectVisibility, subscribe } from './api.ts'
 
-vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn() }))
-vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void }) => <div data-testid="office" data-visitor-enabled={String(props.visitorEnabled)}><span data-testid="office-run">{props.run.id}</span>{props.onVisitorEnabledChange && <button type="button" onClick={() => props.onVisitorEnabledChange?.(!props.visitorEnabled)}>{props.visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}</div> }))
+vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn(), setProjectVisibility: vi.fn() }))
+let visitProject: ((path: string) => boolean | void) | undefined
+vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void; floors?: { name: string; projectPath: string }[]; onVisitProject?: (path: string) => boolean | void }) => {
+  visitProject = props.onVisitProject
+  return <div data-testid="office" data-visitor-enabled={String(props.visitorEnabled)}><span data-testid="office-run">{props.run.id}</span>{props.onVisitorEnabledChange && <button type="button" onClick={() => props.onVisitorEnabledChange?.(!props.visitorEnabled)}>{props.visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}{props.floors?.map((floor) => <button type="button" key={floor.projectPath} onClick={() => props.onVisitProject?.(floor.projectPath)}>이동 {floor.name}</button>)}</div>
+} }))
 
 const ask: AskView = { id: 'ask-doc', run_id: 'newer', question: '문서를 다시 볼까요?', options: ['다시 계획', '계속'], recommended: '다시 계획', status: 'pending', answer: null }
 
@@ -177,5 +181,52 @@ describe('App route integration', () => {
     await renderApp(snapshot({ asks: [ask] }), '#/run/newer')
     fireEvent.click(await screen.findByRole('button', { name: /대표실 결재 대기/ }))
     expect(await screen.findByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeTruthy()
+  })
+
+  it('opens and answers a hidden project approval from the lobby with keyboard focus', async () => {
+    vi.mocked(answerAsk).mockResolvedValue({ ok: true })
+    await renderApp(snapshot({ projects: [{ ...project, hidden: true }], asks: [ask] }))
+    fireEvent.click(await screen.findByRole('button', { name: /문서를 다시 볼까요/ }))
+    expect(await screen.findByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeTruthy()
+    const option = screen.getByRole('button', { name: /다시 계획/ })
+    await waitFor(() => expect(document.activeElement).toBe(option))
+    screen.getByRole('button', { name: '결재 창 닫기' }).focus()
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '계속' }))
+    fireEvent.click(option)
+    await waitFor(() => expect(answerAsk).toHaveBeenCalledWith(ask.id, '다시 계획'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByRole('button', { name: /alpha 층/ })).toBeNull()
+  })
+
+  it('hides and restores a project through the server visibility API', async () => {
+    vi.mocked(setProjectVisibility).mockResolvedValue({ ok: true })
+    await renderApp(snapshot())
+    fireEvent.click(await screen.findByRole('button', { name: '층 메뉴, 01F' }))
+    fireEvent.click(screen.getByRole('button', { name: '이 층 숨기기' }))
+    await waitFor(() => expect(setProjectVisibility).toHaveBeenCalledWith(project.path, true))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /alpha 층 01F/ })).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '숨긴 층 관리' }))
+    fireEvent.click(screen.getByRole('button', { name: 'alpha 층 다시 표시' }))
+    await waitFor(() => expect(setProjectVisibility).toHaveBeenCalledWith(project.path, false))
+    expect(await screen.findByRole('button', { name: /alpha 층 01F/ })).toBeTruthy()
+  })
+
+  it('allows a direct link to a hidden project but excludes hidden elevator destinations', async () => {
+    await renderApp(snapshot({ projects: [{ ...project, hidden: true }] }), '#/run/newer')
+    expect((await screen.findByTestId('office-run')).textContent).toBe('newer')
+    expect(screen.queryByRole('button', { name: '이동 alpha' })).toBeNull()
+  })
+
+  it('rejects a stale elevator callback after its destination becomes hidden', async () => {
+    const beta = { ...project, path: '/workspace/beta', name: 'beta', runs: [{ ...newer, id: 'beta-run', project_path: '/workspace/beta' }] }
+    await renderApp(snapshot({ projects: [project, beta] }), '#/run/newer')
+    await screen.findByRole('button', { name: '이동 beta' })
+    const staleVisit = visitProject!
+    vi.mocked(getState).mockResolvedValue(snapshot({ projects: [project, { ...beta, hidden: true }] }))
+    await act(async () => { stateChanged?.(); await Promise.resolve() })
+    await waitFor(() => expect(screen.queryByRole('button', { name: '이동 beta' })).toBeNull())
+    expect(staleVisit(beta.path)).toBe(false)
+    expect(window.location.hash).toBe('#/run/newer')
   })
 })

@@ -80,6 +80,7 @@ export type ProjectView = {
   path: string
   name: string
   in_workspace: boolean
+  hidden?: boolean
   runs: RunView[]
 }
 

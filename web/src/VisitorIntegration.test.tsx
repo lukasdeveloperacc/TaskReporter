@@ -9,7 +9,7 @@ import roles from './roles.json' with { type: 'json' }
 import { roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
 import { moveWithinArea, nearestDoor } from './roomNavigation.ts'
 
-vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn() }))
+vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn(), setProjectVisibility: vi.fn() }))
 
 const stamp = '2026-10-19T07:00:00.000Z'
 
@@ -249,6 +249,20 @@ describe('visitor elevator App integration', () => {
     await waitFor(() => expect(noReportFloor.disabled).toBe(true))
     expect(window.location.hash).toBe(`#/run/${alphaCurrent.id}`)
     expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
+  })
+
+  it('removes hidden projects from the open elevator without renumbering the remaining floors', async () => {
+    render(<App />)
+    const map = await screen.findByRole('region', { name: 'Alpha 현재 run 사무실 바닥' })
+    fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
+    const picker = await screen.findByRole('dialog', { name: '다른 프로젝트 층 선택' })
+    expect(within(picker).getByRole('button', { name: /3층 · Beta 프로젝트/ })).toBeTruthy()
+    expect(within(picker).getByRole('button', { name: /1층 · 종료 전용 프로젝트/ })).toBeTruthy()
+    vi.mocked(getState).mockResolvedValue({ ...fixture, projects: fixture.projects.map((project) => project.path === betaPath ? { ...project, hidden: true } : project) })
+    await act(async () => { stateChanged?.(); await Promise.resolve() })
+    await waitFor(() => expect(within(picker).queryByRole('button', { name: /Beta 프로젝트/ })).toBeNull())
+    expect(within(picker).getByRole('button', { name: /1층 · 종료 전용 프로젝트/ })).toBeTruthy()
+    expect(window.location.hash).toBe(`#/run/${alphaCurrent.id}`)
   })
 
   it('moves from real staff inspection through overview into the real approval dialog without restoring stale Office focus', async () => {

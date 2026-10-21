@@ -11,4 +11,9 @@ describe('orderProjectFloors', () => {
     expect(labels(source)).toEqual([['/a', 3], ['/b', 2], ['/z', 1]])
     expect(labels([...source].reverse())).toEqual(labels(source))
   })
+
+  it('filters hidden projects after assigning stable floor numbers', () => {
+    const source = [project('/z', 'alpha'), { ...project('/b', 'zeta'), hidden: true }, project('/a', 'beta')]
+    expect(orderProjectFloors(source).map(({ project: item, floorNumber }) => [item.path, floorNumber])).toEqual([['/a', 3], ['/z', 1]])
+  })
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectView, RunView, StateSnapshot } from '../../shared/contract.ts'
-import { getState, subscribe } from './api.ts'
+import { getState, setProjectVisibility, subscribe } from './api.ts'
 import Lobby from './Lobby.tsx'
 import { AskDialog, DocNotice, DocumentPanel, Journal } from './Panels.tsx'
 import { Office } from './Office.tsx'
@@ -120,12 +120,20 @@ export default function App() {
     window.location.hash = `#/run/${encodeURIComponent(id)}`
   }
 
+  async function changeVisibility(path: string, hidden: boolean) {
+    await setProjectVisibility(path, hidden)
+    const next = { ...snapshotRef.current, projects: snapshotRef.current.projects.map((project) => project.path === path ? { ...project, hidden } : project) }
+    snapshotRef.current = next
+    setSnapshot(next)
+  }
+
   if (!selectedRun || !activeProject) {
     return (
       <div className="app-shell">
         <TopBar onHome={() => { window.location.hash = '#/' }} />
         {loadError && <div className="load-error" role="alert"><span>{loadError}</span><button type="button" onClick={() => { setLoading(true); void refresh() }}>다시 불러오기</button></div>}
-        {loading && snapshot.projects.length === 0 ? <LoadingLobby /> : <Lobby projects={snapshot.projects} asks={snapshot.asks} now={now} onOpen={openProject} />}
+        {loading && snapshot.projects.length === 0 ? <LoadingLobby /> : <Lobby projects={snapshot.projects} asks={snapshot.asks} now={now} onOpen={openProject} onSetVisibility={changeVisibility} onOpenAsk={setSelectedAskId} />}
+        <AskDialog ask={selectedAsk} onClose={closeAsk} />
       </div>
     )
   }
@@ -153,7 +161,7 @@ export default function App() {
           <section className="office-column" aria-label="사무실 현황">
             <Office key={selectedRun.id} run={selectedRun} projectRuns={activeProject.runs} asks={floorAsks} now={now} onOpenAsk={setSelectedAskId} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} floors={visitorFloors} onVisitProject={(path) => {
               const latestProject = snapshotRef.current.projects.find((project) => project.path === path)
-              const destination = latestProject && chooseProjectRun(latestProject)
+              const destination = latestProject && !latestProject.hidden && chooseProjectRun(latestProject)
               if (destination) window.location.hash = `#/run/${encodeURIComponent(destination.id)}`
               else setSelectedAskId(null)
               return Boolean(destination)

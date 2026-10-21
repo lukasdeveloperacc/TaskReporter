@@ -247,6 +247,16 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     res.json(db.snapshot((run) => activeDoc(run, root) !== null))
   })
 
+  app.patch('/api/projects/visibility', (req, res) => {
+    const { project_path, hidden } = req.body ?? {}
+    if (typeof project_path !== 'string' || project_path.length === 0 || typeof hidden !== 'boolean') {
+      return res.status(400).json({ error: 'project_path and hidden are required' })
+    }
+    if (!db.setProjectHidden(project_path, hidden)) return res.status(404).json({ error: 'project not found' })
+    broadcast(SSE_EVENTS.changed)
+    return res.json({ ok: true })
+  })
+
   app.get('/api/events', (_req, res) => {
     res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
     res.flushHeaders()
