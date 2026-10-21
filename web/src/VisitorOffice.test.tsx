@@ -7,7 +7,7 @@ import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
 import roles from './roles.json' with { type: 'json' }
-import { moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
+import { ELEVATOR_RECT, moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
 import { moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
 
 const now = Date.parse('2026-10-19T12:00:00.000Z')
@@ -469,6 +469,55 @@ describe('walking to clicked staff', () => {
     advance(950)
     expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('프론트엔드팀')
     expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('frontend-1 업무')
+  })
+
+  it('walks to the elevator before opening one picker, ignoring repeated elevator clicks', () => {
+    const run = makeRun([activeBackendTask()])
+    render(<OfficeHarness run={run} />)
+    const start = characterFoot()
+    const elevator = screen.getByRole('button', { name: '엘리베이터 층간 이동' })
+    fireEvent.click(elevator)
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    advance(200)
+    expect(characterFoot()).not.toEqual(start)
+    fireEvent.click(elevator)
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    advance(950)
+    expect(screen.getAllByRole('dialog', { name: '다른 프로젝트 층 선택' })).toHaveLength(1)
+    expect(screen.queryByText('엘리베이터로 이동 중…')).toBeNull()
+  })
+
+  it('cancels elevator arrival when another click selects an employee', () => {
+    const run = makeRun([activeBackendTask()])
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
+    advance(200)
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    advance(950)
+    expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+  })
+
+  it('keeps the map focused for manual cancellation and reports an unreachable elevator safely', () => {
+    render(<OfficeHarness run={makeRun([activeBackendTask()])} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
+    advance(16)
+    expect(document.activeElement).toBe(map)
+    fireEvent.keyDown(map, { key: 'ArrowLeft', code: 'ArrowLeft' })
+    advance(950)
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+
+    const originalX = ELEVATOR_RECT.x
+    ELEVATOR_RECT.x = 1_000_000
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
+      expect(screen.getByText('엘리베이터까지 가는 길을 찾을 수 없습니다.')).toBeTruthy()
+      expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    } finally {
+      ELEVATOR_RECT.x = originalX
+    }
   })
 
   it.each(['blocked', 'removed', 'ended', 'changed run'] as const)('cancels arrival when %s', (reason) => {

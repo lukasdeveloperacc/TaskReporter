@@ -7,9 +7,9 @@ import { answerAsk, getDoc, getState, setProjectVisibility, subscribe } from './
 
 vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn(), setProjectVisibility: vi.fn() }))
 let visitProject: ((path: string) => boolean | void) | undefined
-vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void; floors?: { name: string; projectPath: string }[]; onVisitProject?: (path: string) => boolean | void }) => {
+vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void; overviewOpen?: boolean; onOverviewOpenChange?: (open: boolean) => void; floors?: { name: string; projectPath: string }[]; onVisitProject?: (path: string) => boolean | void }) => {
   visitProject = props.onVisitProject
-  return <div data-testid="office" data-visitor-enabled={String(props.visitorEnabled)}><span data-testid="office-run">{props.run.id}</span>{props.onVisitorEnabledChange && <button type="button" onClick={() => props.onVisitorEnabledChange?.(!props.visitorEnabled)}>{props.visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}{props.floors?.map((floor) => <button type="button" key={floor.projectPath} onClick={() => props.onVisitProject?.(floor.projectPath)}>이동 {floor.name}</button>)}</div>
+  return <div data-testid="office" data-visitor-enabled={String(props.visitorEnabled)} data-overview-open={String(props.overviewOpen)}><span data-testid="office-run">{props.run.id}</span>{props.onVisitorEnabledChange && <button type="button" onClick={() => props.onVisitorEnabledChange?.(!props.visitorEnabled)}>{props.visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}{props.onOverviewOpenChange && <button type="button" onClick={() => props.onOverviewOpenChange?.(!props.overviewOpen)}>{props.overviewOpen ? '전체 보기 닫기' : '전체 보기'}</button>}{props.floors?.map((floor) => <button type="button" key={floor.projectPath} onClick={() => props.onVisitProject?.(floor.projectPath)}>이동 {floor.name}</button>)}</div>
 } }))
 
 const ask: AskView = { id: 'ask-doc', run_id: 'newer', question: '문서를 다시 볼까요?', options: ['다시 계획', '계속'], recommended: '다시 계획', status: 'pending', answer: null }
@@ -68,6 +68,23 @@ describe('App route integration', () => {
     const picker = await screen.findByRole('combobox', { name: '진행 중 run' })
     fireEvent.change(picker, { target: { value: 'older' } })
     await waitFor(() => expect(screen.getByTestId('office-run').textContent).toBe('older'))
+  })
+
+  it.each([false, true])('preserves overview mode across floor and run remounts (expanded: %s)', async (expanded) => {
+    const betaRuns = [run('beta-newer', '2026-10-19T07:40:00.000Z'), run('beta-older', '2026-10-19T07:10:00.000Z')]
+    const betaProject = { ...project, path: '/workspace/beta', name: 'beta', runs: betaRuns.map((item) => ({ ...item, project_path: '/workspace/beta' })) }
+    await renderApp(snapshot({ projects: [project, betaProject] }), '#/run/newer')
+    const overviewButton = screen.getByRole('button', { name: '전체 보기' })
+    if (expanded) fireEvent.click(overviewButton)
+    expect(screen.getByTestId('office').getAttribute('data-overview-open')).toBe(String(expanded))
+
+    fireEvent.click(screen.getByRole('button', { name: '이동 beta' }))
+    await waitFor(() => expect(screen.getByTestId('office-run').textContent).toBe('beta-newer'))
+    expect(screen.getByTestId('office').getAttribute('data-overview-open')).toBe(String(expanded))
+
+    fireEvent.change(screen.getByRole('combobox', { name: '진행 중 run' }), { target: { value: 'beta-older' } })
+    await waitFor(() => expect(screen.getByTestId('office-run').textContent).toBe('beta-older'))
+    expect(screen.getByTestId('office').getAttribute('data-overview-open')).toBe(String(expanded))
   })
 
   it('shows and dismisses document-change notices for the open run', async () => {

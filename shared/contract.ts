@@ -13,6 +13,18 @@ export type Stage = (typeof STAGES)[number]
 export type Lane = (typeof LANES)[number]
 export type TaskStatus = (typeof STATUSES)[number]
 export type AskStatus = 'pending' | 'answered' | 'closed'
+export type CheckStatus = AskStatus
+export type CheckView = {
+  id: string
+  run_id: string
+  task_id: string
+  owner: string | null
+  question: string
+  status: CheckStatus
+  answer: string | null
+  created_at: string
+  responded_at: string | null
+}
 
 export type Todo = {
   id: string
@@ -103,9 +115,10 @@ export type ReportArgs = {
   title?: string
   patch: Patch
   close_ask_ids?: string[]
+  check_replies?: { check_id: string; answer: string }[]
 }
 
-export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null; checks: CheckView[] }
 
 export type AskArgs = {
   run_id: string

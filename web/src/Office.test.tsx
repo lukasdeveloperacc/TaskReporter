@@ -13,7 +13,7 @@ const makeRun = (tasks: Task[] = [], patch: Partial<RunView> = {}): RunView => (
 })
 const task = (id: string, owner: string, lane: Task['lane'] = 'build', status: Task['status'] = '완료'): Task => ({ id, owner, lane, status, title: `${owner} 작업` })
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('Office scene controls and coordinates', () => {
   it('shows TODO counts on task cards and leaves detail Enter to the native summary', async () => {
@@ -220,6 +220,7 @@ describe('Office scene controls and coordinates', () => {
   })
 
   it.each([false, true])('opens the elevator by clicking without visitor mode (overview: %s)', (overview) => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
     const onVisitProject = vi.fn()
     render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} onVisitProject={onVisitProject} floors={[{ projectPath: '/workspace/other', name: 'other', floorNumber: 2, status: '근무 중', disabled: false, current: false }]} />)
     if (overview) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))

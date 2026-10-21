@@ -39,16 +39,38 @@ describe('store', () => {
     const file = join(dir, 'legacy.db')
     const legacy = new DatabaseSync(file)
     legacy.exec(`CREATE TABLE projects (path TEXT PRIMARY KEY, name TEXT NOT NULL, in_workspace INTEGER NOT NULL, created_at TEXT NOT NULL);
-      INSERT INTO projects VALUES ('/workspace/old', 'old', 1, '1970-01-01T00:00:00.000Z');`)
+      CREATE TABLE runs (id TEXT PRIMARY KEY, project_path TEXT NOT NULL REFERENCES projects(path), doc_path TEXT, doc_baseline TEXT,
+        state TEXT NOT NULL, last_report_at TEXT NOT NULL, ended_at TEXT);
+      CREATE TABLE asks (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), question TEXT NOT NULL, options TEXT NOT NULL,
+        recommended TEXT, status TEXT NOT NULL CHECK(status IN ('pending','answered','closed')), answer TEXT, created_at TEXT NOT NULL);
+      INSERT INTO projects VALUES ('/workspace/old', 'old', 1, '1970-01-01T00:00:00.000Z');
+      INSERT INTO runs VALUES ('old-run', '/workspace/old', NULL, '# legacy baseline', '{"title":"Legacy","tasks":[{"id":"T","status":"진행중"}]}', '1970-01-01T00:00:00.000Z', NULL);
+      INSERT INTO asks VALUES ('old-ask', 'old-run', 'Legacy?', '["Yes"]', NULL, 'pending', NULL, '1970-01-01T00:00:00.000Z');`)
     legacy.close()
     db = openStore(file)
     expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/old', hidden: false })
+    expect(db.getRun('old-run')).toMatchObject({ doc_baseline: '# legacy baseline', state: { title: 'Legacy' } })
+    expect(db.getAsk('old-ask')).toMatchObject({ status: 'pending' })
     expect(db.setProjectHidden('/workspace/old', true)).toBe(true)
     db.upsertProject('/workspace/old', false, 1)
     db.close()
     db = openStore(file)
     expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/old', hidden: true, in_workspace: false })
+    db.reconcileChecks('old-run', undefined, db.getRun('old-run')!.state, 1_000, false)
+    expect(db.checks('old-run', true)).toHaveLength(1)
     expect(db.setProjectHidden('/workspace/missing', true)).toBe(false)
+  })
+
+  it('persists check history and task cooldown clocks across database reopen', () => {
+    const run = db.createRun('/workspace/first', { tasks: [{ id: 'T', status: '진행중' }] }, 1_000)
+    const state = run.state
+    db.reconcileChecks(run.id, undefined, state, 1_000, false)
+    const check = db.checks(run.id, true)[0]!
+    db.replyCheck(check.id, 'Unable to discover runtime metadata.', 2_000)
+    db.close()
+    db = openStore(join(dir, 'store.db'))
+    expect(db.check(check.id)).toMatchObject({ status: 'answered', answer: 'Unable to discover runtime metadata.', responded_at: new Date(2_000).toISOString() })
+    expect(db.checks(run.id)).toHaveLength(1)
   })
 
   it('keeps hidden projects, run history, and asks in snapshots', () => {
@@ -96,12 +118,17 @@ describe('store', () => {
       run.last_report_at = new Date(1).toISOString()
       db.saveRun(run)
       db.closeAsks(run.id)
+      db.reconcileChecks(run.id, run.state, { tasks: [{ id: 'T', status: '진행중' }] }, 1, false)
       db.createAsk(run.id, 'new?', ['Yes'], undefined, 1)
       throw new Error('reject')
     })).toThrow('reject')
     expect(db.snapshot(() => false)).toEqual(before)
     expect(db.getRun(run.id)!.doc_baseline).toBeNull()
     expect(db.getAsk(ask)!.status).toBe('pending')
+    expect(db.checks(run.id)).toEqual([])
+    const inspection = new DatabaseSync(join(dir, 'store.db'))
+    expect(inspection.prepare('SELECT count(*) AS count FROM task_clocks').get()).toEqual({ count: 0 })
+    inspection.close()
     expect(db.transaction(() => { db.answerAsk(ask, 'Yes'); return 42 })).toBe(42)
     expect(db.getAsk(ask)!.status).toBe('answered')
   })

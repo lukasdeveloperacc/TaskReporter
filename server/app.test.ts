@@ -39,7 +39,7 @@ describe('office app', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  async function start(options: { askWaitMs?: number; staticDir?: string } = {}) {
+  async function start(options: { askWaitMs?: number; staticDir?: string; now?: () => number } = {}) {
     const created = createApp({ db, workspaceRoot: workspace, now: () => 1_800_000_000_000, askWaitMs: 200, ...options })
     closeApp = created.close
     const http = createServer(created.app)
@@ -134,10 +134,240 @@ describe('office app', () => {
     expect(Object.keys(todos.items.properties)).toEqual(['id', 'text', 'phase', 'done', 'detail'])
     expect(Object.values(todos.items.properties).every((field) => field.description.length > 0)).toBe(true)
     expect(reportTool.description).toContain('todos:[{id:"FE-2",done:true}]')
-    expect(reportTool.description!.split('\n')).toHaveLength(5)
+    expect(reportTool.description!.split('\n')).toHaveLength(7)
     expect(client.getInstructions()).toBe(reportTool.description)
     expect(tools.every((tool) => tool.inputSchema.additionalProperties === false)).toBe(true)
     expect(tools.find((tool) => tool.name === 'get_run')!.annotations?.readOnlyHint).toBe(true)
+    await client.close()
+  })
+
+  it('creates durable missing-metadata checks, accepts replies idempotently, and exposes read-only history', async () => {
+    let clock = 10_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checks = first.checks as { id: string; question: string; status: string }[]
+    expect(checks).toHaveLength(1)
+    expect(checks[0]!.question).toContain('Currently missing: model, effort')
+    expect(checks[0]!.question).toContain('model or effort')
+    const checkId = checks[0]!.id
+    const before = db.checks(runId)
+    expect(parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!.checks).toEqual(before)
+    clock += 1
+    const repeated = parseTool(await report(client, base, { run_id: runId, patch: { summary: 'still working' } }))!
+    expect((repeated.checks as { id: string }[])[0]!.id).toBe(checkId)
+    const reply = { check_id: checkId, answer: 'The host does not expose this metadata yet.' }
+    const answered = parseTool(await report(client, base, { run_id: runId, check_replies: [reply], patch: {} }))!
+    expect(answered.checks).toEqual([])
+    expect(parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!.checks).toMatchObject([
+      { id: checkId, status: 'answered', answer: reply.answer, responded_at: new Date(clock).toISOString() },
+    ])
+    clock += 1
+    await report(client, base, { run_id: runId, check_replies: [reply], patch: { tasks: [{ id: 'T', note: 'still active' }] } })
+    expect(db.checks(runId)).toHaveLength(1)
+    clock += 1_799_998
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.checks).toEqual([])
+    clock += 1
+    const next = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    expect(next.checks).toHaveLength(1)
+    expect((next.checks as { id: string }[])[0]!.id).not.toBe(checkId)
+    await client.close()
+  })
+
+  it('requests each absent or blank model/effort value only for active tasks', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: { tasks: [
+      { id: 'model-only', status: '진행중', model: 'actual' },
+      { id: 'effort-only', status: '진행중', effort: 'high' },
+      { id: 'blank', status: '진행중', model: ' ', effort: '' },
+      { id: 'complete', status: '진행중', model: 'actual', effort: 'high' },
+      { id: 'waiting' },
+    ] } }))!
+    const checks = first.checks as { task_id: string; question: string }[]
+    expect(checks.map((check) => check.task_id).sort()).toEqual(['blank', 'effort-only', 'model-only'])
+    expect(checks.find((check) => check.task_id === 'model-only')!.question).toContain('Currently missing: effort')
+    expect(checks.find((check) => check.task_id === 'effort-only')!.question).toContain('Currently missing: model')
+    expect(checks.find((check) => check.task_id === 'blank')!.question).toContain('Currently missing: model, effort')
+    const repeated = parseTool(await report(client, base, { run_id: String(first.run_id), patch: {} }))!
+    expect((repeated.checks as { id: string }[]).map((check) => check.id).sort()).toEqual((first.checks as { id: string }[]).map((check) => check.id).sort())
+    await client.close()
+  })
+
+  it('includes current unfinished TODOs in check questions and keeps later pending guidance current', async () => {
+    let clock = 200_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{
+      id: 'T', status: '진행중', model: 'actual-model', effort: 'high',
+      todos: [{ id: 'DONE', text: 'Finished item', done: true }, { id: 'OPEN', text: 'Pending work', done: false }],
+    }] } }))!
+    const runId = String(first.run_id)
+    expect(first.checks).toEqual([])
+    clock += 1_800_000
+    const stale = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    const check = (stale.checks as { id: string; question: string }[])[0]!
+    expect(check.question).toContain('OPEN (Pending work)')
+    expect(check.question).not.toContain('DONE (Finished item)')
+    expect(check.question).toContain('inspect the latest task TODOs')
+    const updated = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{
+      id: 'T', todos: [{ id: 'LATER', text: 'Added while pending' }],
+    }] } }))!
+    expect(updated.checks).toMatchObject([{ id: check.id, question: check.question }])
+    const latest = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!.tasks as { todos: { id: string; text?: string }[] }[]
+    expect(latest[0]!.todos).toContainEqual(expect.objectContaining({ id: 'LATER', text: 'Added while pending' }))
+    await client.close()
+  })
+
+  it('rejects conflicting or foreign replies without changing report, project, checks, asks, or baselines', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { doc_path: 'plan.md', patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    const before = db.getRun(runId)
+    expect((await report(client, base, { run_id: runId, doc_path: 'other.md', check_replies: [
+      { check_id: checkId, answer: 'valid' }, { check_id: 'foreign', answer: 'invalid' },
+    ], patch: { summary: 'must roll back' }, close_ask_ids: ['unknown'] })).isError).toBe(true)
+    expect(db.getRun(runId)).toEqual(before)
+    expect(db.checks(runId)).toEqual(first.checks)
+    expect(db.snapshot(() => false).projects).toHaveLength(1)
+    expect(db.snapshot(() => false).asks).toEqual([])
+    await client.close()
+  })
+
+  it('rolls back a valid check reply and ask closure when task completion leaves TODOs open', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { doc_path: 'plan.md', patch: { tasks: [{
+      id: 'T', status: '진행중', todos: [{ id: 'TODO-1', done: false }],
+    }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    const askId = db.createAsk(runId, 'Continue?', ['Yes'], undefined, 1_800_000_000_000)
+    const before = db.getRun(runId)
+    const rejected = await report(client, base, {
+      run_id: runId, check_replies: [{ check_id: checkId, answer: 'The actual work is still incomplete.' }],
+      close_ask_ids: [askId], patch: { tasks: [{ id: 'T', status: '완료' }] },
+    })
+    expect(rejected.isError).toBe(true)
+    expect(db.getRun(runId)).toEqual(before)
+    expect(db.check(checkId)).toMatchObject({ status: 'pending', answer: null })
+    expect(db.getAsk(askId)).toMatchObject({ status: 'pending', answer: null })
+    await client.close()
+  })
+
+  it('validates reply identity, nonblank values, and duplicate answers strictly', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    const otherRunId = String(parseTool(await report(client, base, { project_path: join(workspace, 'other'), patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!.run_id)
+    for (const args of [
+      { check_replies: [{ check_id: checkId, answer: 'answer' }] },
+      { run_id: runId, check_replies: [{ check_id: '', answer: 'answer' }] },
+      { run_id: runId, check_replies: [{ check_id: checkId, answer: ' ' }] },
+      { run_id: runId, check_replies: [{ check_id: 'unknown', answer: 'answer' }] },
+      { run_id: otherRunId, check_replies: [{ check_id: checkId, answer: 'answer' }] },
+      { run_id: runId, check_replies: [{ check_id: checkId, answer: 'one' }, { check_id: checkId, answer: 'two' }] },
+    ]) expect((await report(client, base, args)).isError).toBe(true)
+    expect(db.check(checkId)).toMatchObject({ status: 'pending', answer: null })
+    expect(db.getRun(runId)!.state.tasks).toMatchObject([{ id: 'T', status: '진행중' }])
+    await client.close()
+  })
+
+  it('closes pending checks on owner transfer and task/run closure', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', owner: 'old', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const oldId = (first.checks as { id: string }[])[0]!.id
+    const reassigned = parseTool(await report(client, base, { run_id: runId,
+      check_replies: [{ check_id: oldId, answer: 'Old owner reports their status.' }],
+      patch: { tasks: [{ id: 'T', owner: 'new' }] },
+    }))!
+    expect(reassigned.checks).toHaveLength(1)
+    expect(reassigned.checks).toMatchObject([{ owner: 'new' }])
+    const newId = (reassigned.checks as { id: string }[])[0]!.id
+    expect(newId).not.toBe(oldId)
+    expect(db.check(oldId)).toMatchObject({ status: 'answered', answer: 'Old owner reports their status.' })
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', status: '완료' }] } })
+    expect(db.checks(runId).map(({ id, status }) => ({ id, status })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: oldId, status: 'answered' }, { id: newId, status: 'closed' },
+    ].sort((a, b) => a.id.localeCompare(b.id)))
+    expect((await report(client, base, { run_id: runId, check_replies: [{ check_id: oldId, answer: 'late' }], patch: {} })).isError).toBe(true)
+    await client.close()
+  })
+
+  it('applies a same-report reply before interruption and accepts its replay after completion', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    const reply = { check_id: checkId, answer: 'Work is ongoing; metadata unavailable.' }
+    const stopped = parseTool(await report(client, base, { run_id: runId, check_replies: [reply], patch: { stage: '중단' } }))!
+    expect(stopped.checks).toEqual([])
+    expect(db.check(checkId)).toMatchObject({ status: 'answered', answer: reply.answer, responded_at: expect.any(String) })
+    const replay = await report(client, base, { run_id: runId, check_replies: [reply], patch: {} })
+    expect(replay.isError).toBeFalsy()
+    expect(db.check(checkId)).toMatchObject({ status: 'answered', answer: reply.answer })
+    await client.close()
+  })
+
+  it('uses the task clock and only meaningful task fields to trigger stale checks', async () => {
+    let clock = 50_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중', model: 'actual-model', effort: 'high', title: 'A' }] } }))!
+    const runId = String(first.run_id)
+    expect(first.checks).toEqual([])
+    clock += 1_700_000
+    const metadataOnly = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', title: 'B', model: 'new-model', effort: 'medium', lane: 'review' }] } }))!
+    expect(metadataOnly.checks).toEqual([])
+    clock += 99_999
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.checks).toEqual([])
+    clock += 1
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.checks).toHaveLength(1)
+    const second = parseTool(await report(client, base, { title: 'Second', patch: { tasks: [
+      { id: 'N', status: '진행중', model: 'actual', effort: 'high', todos: [{ id: 'todo', done: false }] },
+    ] } }))!
+    const secondRun = String(second.run_id)
+    clock += 1_700_000
+    expect(parseTool(await report(client, base, { run_id: secondRun, patch: { tasks: [{ id: 'N', note: 'meaningful', todos: [{ id: 'todo', done: true }] }] } }))!.checks).toEqual([])
+    clock += 1_799_999
+    expect(parseTool(await report(client, base, { run_id: secondRun, patch: {} }))!.checks).toEqual([])
+    clock += 1
+    expect(parseTool(await report(client, base, { run_id: secondRun, patch: {} }))!.checks).toHaveLength(1)
+    await client.close()
+  })
+
+  it('keeps accepted-reply cooldown across same-owner reopen and never recreates checks while interrupted', async () => {
+    let clock = 70_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    await report(client, base, { run_id: runId, check_replies: [{ check_id: checkId, answer: 'No host metadata available.' }], patch: {} })
+    clock += 1
+    await report(client, base, { run_id: runId, patch: { stage: '중단' } })
+    expect(db.checks(runId)).toMatchObject([{ status: 'answered' }])
+    await report(client, base, { run_id: runId, patch: { stage: '수정' } })
+    expect(db.checks(runId)).toHaveLength(1)
+    clock += 1_800_000
+    const stale = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    expect(stale.checks).toHaveLength(1)
+    await client.close()
+  })
+
+  it('preserves metadata reply cooldown when the same owner reactivates a closed task', async () => {
+    let clock = 90_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', owner: 'same', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const checkId = (first.checks as { id: string }[])[0]!.id
+    await report(client, base, { run_id: runId, check_replies: [{ check_id: checkId, answer: 'Unavailable.' }], patch: {} })
+    clock += 1
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', status: '완료' }] } })
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', status: '진행중' }] } })
+    expect(db.checks(runId)).toHaveLength(1)
+    clock += 1_799_998
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.checks).toEqual([])
+    clock += 1
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.checks).toHaveLength(1)
     await client.close()
   })
 

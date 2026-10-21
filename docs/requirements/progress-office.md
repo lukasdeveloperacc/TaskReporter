@@ -4,11 +4,13 @@
 
 ## 계약과 업무 규칙
 
-`POST /mcp`의 `report`는 절대 `project_path`, `patch`와 선택적인 `run_id`, `doc_path`, `title`, `close_ask_ids`를 받는다. 새 실행은 run_id를 발급하고 기존 실행은 같은 id로 이어간다. 다른 프로젝트에 속한 run_id나 알 수 없는 id는 오류이며 자동으로 새 run을 만들지 않는다. 응답은 `{run_id, doc_changes, state, ended_at}`이며 state는 병합된 진행 상태다. 정확한 타입은 [contract.ts](../../shared/contract.ts), 검증·병합은 [progress.ts](../../server/progress.ts)를 따른다.
+`POST /mcp`의 `report`는 절대 `project_path`, `patch`와 선택적인 `run_id`, `doc_path`, `title`, `close_ask_ids`, `check_replies`를 받는다. 새 실행은 run_id를 발급하고 기존 실행은 같은 id로 이어간다. 다른 프로젝트에 속한 run_id나 알 수 없는 id는 오류이며 자동으로 새 run을 만들지 않는다. 응답은 `{run_id, doc_changes, state, ended_at, checks}`이며 state는 병합된 진행 상태다. 정확한 타입은 [contract.ts](../../shared/contract.ts), 검증·병합은 [progress.ts](../../server/progress.ts)를 따른다.
+
+체크인 확장은 로컬 구현되었으며 전체 검사·독립 리뷰는 진행 중이다. 선택적인 최상위 `check_replies: [{check_id, answer}]`와 `report.checks`(pending), 읽기 전용 `get_run.checks`(전체 이력)를 추가한다. model·effort 누락은 보고를 거부하는 대신 즉시 확인 요청을 만들며, 값 보충만으로 업무 진척·명시 응답으로 보지 않는다. 기존 필수 입력과 progress 병합 결과는 유지한다. [체크인 요구사항](decisions-integration.md#에이전트-체크인)에서 정체 기준·수명주기·쿨다운·오류를 관리한다.
 
 - 텍스트 patch는 title·stage·summary·todo·blockers만 받는다. task는 id, decision은 앞뒤 공백을 제거한 title, review는 round+reviewer로 병합한다. 보내지 않은 기존 항목을 보존한다.
 - stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작한다. task lane은 plan/build/review/fix/finish, status는 대기중·진행중·완료·중단이다. after는 존재하는 task id만 참조한다.
-- 진행중 진입과 완료·중단 전환 때 task 시간을 기록한다. 열린 task가 있으면 완료 report를 거부한다. finish 종료의 자동 완료 규칙은 원본 progress.py와 맞춘다.
+- 진행중 진입과 완료·중단 전환 때 task 시간을 기록한다. 열린 task가 있으면 완료 report를 거부한다. finish 종료의 자동 stage 규칙은 원본 progress.py와 맞추며 아래 미완료 TODO 성공 종료 검증을 추가한다.
 - review 이름은 Karpathy Agent, Ponytail Agent, Impeccable Agent, E2E Agent다. 라운드와 보고된 판정·note를 표시한다.
 
 ### MCP 입력 검증·조회 개선
@@ -33,6 +35,18 @@ task에 선택 필드 `todos`를 추가한다. 각 항목은 비어 있지 않�
 직원 현재 업무는 해당 owner의 계획·대기 작업도 포함하며, 현재 업무와 작업 기록 모두 Phase TODO의 완료 표시·진행률 막대와 기본 접힌 detail을 보여준다. 완료 표시는 보고 상태를 읽는 용도이며 앱에서 원본 상태를 수정하지 않는다. note는 줄바꿈 또는 ` · ` 구분자로 나눠 읽기 쉽게 표시한다. 업무 보드에는 TODO 완료 개수/전체 개수(x/y)를 표시한다. todos가 없는 기존 작업도 계속 읽을 수 있어야 한다.
 
 완료 기준은 TODO 부분 병합·순서·필드 보존·기본 text, 타입·알 수 없는 키 거부, report/get_run 노출, 계획·대기 작업과 현재/기록 TODO·detail·진행 표시, note 분리와 기존 작업 호환을 검증하는 것이다. 외부 progress.py와 기존 golden fixture는 변경하지 않는다.
+
+#### 미완료 TODO의 성공 종료 방지
+
+상태: 로컬 구현·backend 대상 검사 완료. 전체 검사·독립 리뷰는 진행 중이다. [변경 010](../changes/010-agent-check-ins.md)의 추가 범위이며 위 변경 009의 완료 기록과 구분한다.
+
+병합 후 `task.todos`에서 `done !== true`인 항목은 모두 미완료다. done 생략도 미완료이며 TODO가 없는 작업에는 추가 조건이 없다. task의 최종 status가 `완료`이면 자기 TODO가 하나라도 미완료인 report를 거부한다. 이미 완료된 task에 새 unchecked TODO를 추가하거나 완료 TODO를 해제하는 보고도 같은 검증을 받는다. 실제 일을 마치고 같은 patch에서 TODO를 `done:true`로 병합한 뒤 task 완료를 보고할 수 있다.
+
+명시적인 `stage: "완료"`와 finish 작업 종료가 자동으로 만든 최종 stage `완료`는 모든 task의 TODO를 검사한다. status가 `중단`인 task도 미완료 TODO를 성공한 run 안에 숨길 수 없다. 기존 열린 task가 있으면 완료를 거부하는 규칙도 유지한다. finish의 자동 stage 전환은 기존 규칙을 따르되 이 TODO 성공 검증을 추가한다.
+
+run stage `중단`은 미완료 일을 남긴 명시적인 비성공 종료로 허용한다. 서버가 TODO를 자동 체크하거나 성공을 주장하지 않는다. 다만 stage가 중단이어도 task 자체를 `완료`로 보고하면 그 task의 자기 TODO 완료 조건은 적용한다. 새 TODO 필드·취소 endpoint·최상위 자유문자열 `todo` 해석은 추가하지 않는다.
+
+검증 기준은 done false·생략인 자기 TODO의 task 완료 거부, 완료 task의 미완료 항목 추가/해제 거부, 같은 patch의 실제 TODO 완료+task 완료 허용, 명시/자동 run 완료에서 중단 task를 포함한 미완료 TODO 거부, 미완료 없는 기존 작업 호환, run 중단 허용과 자동 체크 없음이다. 거부된 report는 진행 상태·체크인 응답·ask 종료를 포함한 저장을 남기지 않아야 한다. 오류는 `task <task_id>: unfinished TODOs: <todo_ids>` 또는 `run stage 완료 has unfinished TODOs: <task_id>: <todo_ids>; resolve them or interrupt the run`이며 여러 task 목록은 세미콜론으로 연결한다.
 
 ## 화면·상태
 
@@ -75,6 +89,18 @@ API는 `PATCH /api/projects/visibility`에 `{project_path: string, hidden: boole
 - 엘리베이터는 초기 포커스·Tab 순환·Esc·명시적 닫기를 가진 모달이고 직원 상세는 화면 중앙의 이름 있는 큰 모달이며 dialog 역할과 모달 상태를 제공한다. 배경을 어둡게 하고 배경 클릭으로 닫지 않으며 모달 안에서 Tab·Shift+Tab 포커스를 순환시킨다. 데스크톱은 폭 960px을 기준으로 화면 가장자리에서 16px 이상 떨어지도록 맞추고 최대 높이 85dvh 안에서 긴 본문을 스크롤한다. 모바일 높이는 85dvh와 화면 높이에서 32px을 뺀 값 중 작은 값으로 제한해 화면 안에 맞춘다. 주요 본문·제목은 데스크톱 20px·24px, 모바일 18px·22px로 읽을 수 있다. 정상 닫기 시 같은 사무실이 남아 있고 결재 등 상위 창이 없을 때 일반 보기·전체 보기 모두 지도에 포커스를 돌려준다. 경로 변경·언마운트에서는 이전 지도에 포커스를 돌려주지 않는다.
 - 화면에 방향 버튼 네 개, 상호작용, 일시정지·재개, 끝내기와 짧은 한국어 도움말을 제공한다. 좁은 화면에서도 같은 단위 이동과 동작을 사용할 수 있다. 주변 대상·층 도착은 상태 안내로 읽고 매 이동마다 알리지 않는다. 감소된 모션에서는 부드러운 카메라 이동이나 필수 이동 연출이 없다.
 - 층 이동은 실제 hash·선택 run을 변경한다. 이전 직원 상세·선택한 결재를 정리하고 프로젝트가 바뀌면 이전 업무 일지 스냅샷도 닫는다. 결재 자체는 서버에서 답변·종료하지 않는다. 외부 결재 목록은 목적지 프로젝트의 run 전체, 지도 서류는 선택 run 범위를 유지한다. 다른 유효 층으로의 run 선택·직접 hash·뒤로 가기에서는 둘러보기를 활성화하고 엘리베이터 앞 복도에서 시작한다. 로비·로딩이 끝난 잘못된 경로에서는 종료한다. 새로고침의 유효 층 진입도 기본 활성화하며, 같은 run의 보고 갱신은 명시적 끝내기 상태를 유지한다.
+
+### 엘리베이터 클릭 이동과 보기 모드 유지
+
+상태: 로컬 구현. 엘리베이터 클릭 이동과 App에서 관리하는 전체 보기 모드 유지가 반영되었으며 UI 대상 검사 4개 파일·80개 테스트와 typecheck·diff 검사를 통과했으며 전체 검사·독립 리뷰·브라우저 검증은 진행 중이다. [변경 010](../changes/010-agent-check-ins.md)의 새 결과이며 기존 완료 이력과 구분한다.
+
+엘리베이터를 클릭하면 대표가 현재 위치에서 엘리베이터까지 실제 지도 경로를 따라 이동한 뒤 층 선택 창을 연다. 도착 전에 창을 열거나 대표 위치를 순간적으로 바꿔 클릭 이동을 대신하지 않는다. 이미 도착한 위치이면 바로 열 수 있으며 감소된 모션 설정에서는 기존 클릭 이동의 모션 축소 정책을 따른다. 일반 보기·전체 보기 모두 지도 경계·벽·출입구의 기존 이동 기준을 지킨다. 가까이에서 E·Enter·상호작용 버튼으로 여는 기존 경로도 유지한다.
+
+이동 중 수동 이동·정지/끝내기·결재 같은 기존 중단 동작, 다른 층/run으로 전환, 대상 경로 실패가 발생하면 이전 이동의 늦은 도착 처리로 창을 열지 않는다. 경로를 찾을 수 없으면 도착이나 층 선택 성공으로 처리하지 않고 현재 위치와 실패 안내를 유지한다. 층 선택 창의 키보드 탐색·포커스·닫기와 목적지 소실 시 현재 층 유지·오류 안내는 기존 계약을 따른다.
+
+전체 보기에서 층이나 run을 바꾸면 목적지도 전체 보기로 유지하고 일반 보기에서 바꾸면 일반 보기로 유지한다. 선택한 보기 모드는 [App](../../web/src/App.tsx)의 overviewOpen과 [Office](../../web/src/Office.tsx)의 overviewOpen/onOverviewOpenChange로 유지하되 위치·이동 경로·직원 상세·엘리베이터 창·안내 목적지 등 층별 상태는 기존 전환 규칙대로 정리한다. 목적지 도착 위치·카메라·포커스는 선택된 보기 모드에 맞춘다. 결재가 전체 보기를 닫는 기존 규칙은 유지하며 브라우저 저장소·새로고침 복원·디자인 변경은 추가하지 않는다.
+
+검증 기준은 클릭 직후 창 닫힘→이동 경로·도착→창 열림 순서, 이미 도착한 경우, 모션 축소, 중단·경로 실패·전환 뒤 늦은 창 열림 없음, 전체/일반 모드 각각의 층·run 전환 유지, 층별 상세 초기화와 기존 결재·키보드·포커스 회귀다. 데스크톱·390×844 실제 브라우저 E2E와 Impeccable 검토가 필요하며 아직 수행한 것으로 기록하지 않는다.
 
 ### 직접 둘러보기 완료·검증 기준
 

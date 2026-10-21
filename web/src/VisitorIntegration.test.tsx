@@ -136,15 +136,23 @@ describe('visitor elevator App integration', () => {
     window.location.hash = `#/run/${alphaCurrent.id}`
   })
 
-  it('clicks the overview elevator and navigates to the selected project', async () => {
+  it.each([false, true])('walks through repeated floor changes and keeps overview mode (expanded: %s)', async (expanded) => {
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
-    fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
-    const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
-    fireEvent.click(within(picker).getByRole('button', { name: /Beta 프로젝트/ }))
-    await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
-    expect(await screen.findByRole('heading', { name: 'Beta 프로젝트' })).toBeTruthy()
-    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    await screen.findByRole('heading', { name: 'Alpha 프로젝트' })
+    if (expanded) fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
+
+    for (const destination of [betaLatest, alphaCurrent, betaLatest]) {
+      fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
+      expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+      const picker = await screen.findByRole('dialog', { name: '다른 프로젝트 층 선택' })
+      const floorName = destination.project_path === betaPath ? /Beta 프로젝트/ : /Alpha 프로젝트/
+      fireEvent.click(within(picker).getByRole('button', { name: floorName }))
+      await waitFor(() => expect(window.location.hash).toBe(`#/run/${destination.id}`))
+      const projectName = destination.project_path === betaPath ? 'Beta 프로젝트' : 'Alpha 프로젝트'
+      expect(await screen.findByRole('heading', { name: projectName })).toBeTruthy()
+      expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+      expect(screen.getByRole('button', { name: expanded ? '전체 보기 닫기' : '전체 보기' })).toBeTruthy()
+    }
   })
 
   it('walks through the real Office elevator, selects a destination project and keeps run-scoped data correct', async () => {
@@ -176,6 +184,7 @@ describe('visitor elevator App integration', () => {
 
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
     expect(await screen.findByRole('heading', { name: 'Beta 프로젝트' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '전체 보기' })).toBeTruthy()
     fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(screen.getByText('beta latest summary')).toBeTruthy()
     expect(screen.getByText('모델 · claude-opus')).toBeTruthy()
@@ -197,14 +206,14 @@ describe('visitor elevator App integration', () => {
     const runPicker = screen.getByRole('combobox', { name: '진행 중 run' })
     fireEvent.change(runPicker, { target: { value: betaOlder.id } })
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaOlder.id}`))
-    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
+    expect(screen.getByRole('button', { name: '전체 보기 닫기' })).toBeTruthy()
     expect(await screen.findByText('Beta API 구현')).toBeTruthy()
     expect(document.querySelector('.office-ask')?.textContent).toContain('Beta 다른 run 승인 질문')
     expect(document.querySelector('.ask-ticket')?.textContent).toContain('Beta 다른 run 승인 질문')
 
     fireEvent.change(screen.getByRole('combobox', { name: '진행 중 run' }), { target: { value: betaLatest.id } })
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
-    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
+    expect(screen.getByRole('button', { name: '전체 보기 닫기' })).toBeTruthy()
     await waitFor(() => expect(document.querySelector('.office-ask')).toBeNull())
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
 
@@ -215,14 +224,15 @@ describe('visitor elevator App integration', () => {
     expect(await screen.findByText('alpha 현재 작업 요약')).toBeTruthy()
     expect(screen.queryByRole('dialog', { name: '대표님의 결정이 필요합니다' })).toBeNull()
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '전체 보기' })).toBeTruthy()
     expect(representative().style.left).toBe('142px')
     expect(representative().style.top).toBe('1392px')
 
     window.history.back()
     await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
-    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
     expect(await screen.findByText('beta latest summary')).toBeTruthy()
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '전체 보기' })).toBeTruthy()
     expect(representative().style.left).toBe('142px')
     expect(representative().style.top).toBe('1392px')
 

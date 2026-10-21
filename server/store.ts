@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { AskView, ProgressData, StateSnapshot } from '../shared/contract.ts'
+import { STALE_MS, type AskView, type CheckView, type ProgressData, type StateSnapshot } from '../shared/contract.ts'
 
 export type RunRow = {
   id: string
@@ -25,8 +25,8 @@ function askRow(row: StoredAsk): AskRow {
 
 export function openStore(file: string) {
   const db = new DatabaseSync(file)
+  db.exec('PRAGMA foreign_keys = ON')
   db.exec(`
-    PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS projects (
       path TEXT PRIMARY KEY, name TEXT NOT NULL, in_workspace INTEGER NOT NULL, created_at TEXT NOT NULL,
       hidden INTEGER NOT NULL DEFAULT 0
@@ -40,6 +40,17 @@ export function openStore(file: string) {
       options TEXT NOT NULL, recommended TEXT, status TEXT NOT NULL CHECK(status IN ('pending','answered','closed')),
       answer TEXT, created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS task_clocks (
+      run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL, owner TEXT,
+      observed_at INTEGER NOT NULL, replied_at INTEGER,
+      PRIMARY KEY(run_id, task_id)
+    );
+    CREATE TABLE IF NOT EXISTS checks (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL, owner TEXT,
+      question TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','answered','closed')),
+      answer TEXT, created_at TEXT NOT NULL, responded_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS checks_one_pending_task ON checks(run_id, task_id) WHERE status='pending';
   `)
   if (!(db.prepare('PRAGMA table_info(projects)').all() as { name: string }[]).some((column) => column.name === 'hidden')) {
     db.exec('ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0')
@@ -135,6 +146,70 @@ export function openStore(file: string) {
         const row = close.get(runId, id) as { id: string } | undefined
         return row ? [row.id] : []
       })
+    },
+    checks(runId: string, pendingOnly = false): CheckView[] {
+      return db.prepare(`SELECT id, run_id, task_id, owner, question, status, answer, created_at, responded_at
+        FROM checks WHERE run_id=? ${pendingOnly ? "AND status='pending'" : ''} ORDER BY created_at, id`).all(runId) as CheckView[]
+    },
+    check(id: string): CheckView | undefined {
+      return db.prepare('SELECT id, run_id, task_id, owner, question, status, answer, created_at, responded_at FROM checks WHERE id=?').get(id) as CheckView | undefined
+    },
+    replyCheck(id: string, answer: string, now: number): void {
+      const check = this.check(id)
+      if (!check) throw new Error('unknown check_id for run')
+      if (check.status === 'closed') throw new Error('check is closed')
+      if (check.status === 'answered') {
+        if (check.answer !== answer) throw new Error(`conflicting answer for check_id: ${id}`)
+        return
+      }
+      db.prepare("UPDATE checks SET status='answered', answer=?, responded_at=? WHERE id=? AND status='pending'")
+        .run(answer, new Date(now).toISOString(), id)
+      db.prepare('UPDATE task_clocks SET observed_at=?, replied_at=? WHERE run_id=? AND task_id=?')
+        .run(now, now, check.run_id, check.task_id)
+    },
+    reconcileChecks(runId: string, previous: ProgressData | undefined, state: ProgressData, stamp: number, reset: boolean): void {
+      const before = new Map((previous?.tasks ?? []).map((task) => [task.id, task]))
+      const active = (state.tasks ?? []).filter((task) => task.status === '진행중')
+      const ended = state.stage?.split(' ')[0] === '완료' || state.stage?.split(' ')[0] === '중단'
+      for (const task of active) {
+        const old = before.get(task.id)
+        const owner = task.owner?.trim() || null
+        const oldOwner = old?.owner?.trim() || null
+        const priorClock = db.prepare('SELECT * FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null; observed_at: number; replied_at: number | null } | undefined
+        const transferred = (old !== undefined && oldOwner !== owner) || (priorClock !== undefined && priorClock.owner !== owner)
+        if (transferred) db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, task.id)
+        const meaningful = old !== undefined && (old.status !== task.status || old.owner !== task.owner || old.note !== task.note || JSON.stringify(old.todos ?? []) !== JSON.stringify(task.todos ?? []))
+        const observed = reset || !priorClock || transferred || meaningful ? stamp : priorClock.observed_at
+        const repliedAt = transferred ? null : priorClock?.replied_at ?? null
+        db.prepare(`INSERT INTO task_clocks(run_id, task_id, owner, observed_at, replied_at)
+          VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, task_id) DO UPDATE SET owner=excluded.owner,
+          observed_at=excluded.observed_at, replied_at=excluded.replied_at`)
+          .run(runId, task.id, owner, observed, repliedAt)
+        const pending = db.prepare("SELECT id FROM checks WHERE run_id=? AND task_id=? AND status='pending'").get(runId, task.id)
+        const missing = !task.model?.trim() || !task.effort?.trim()
+        const cooldown = !transferred && priorClock?.owner === owner && priorClock.replied_at !== null && stamp - priorClock.replied_at < STALE_MS
+        if (!ended && !pending && (missing && !cooldown || stamp - observed >= STALE_MS && !cooldown)) {
+          const missingFields = [!task.model?.trim() && 'model', !task.effort?.trim() && 'effort'].filter(Boolean).join(', ')
+          const unfinished = (task.todos ?? []).filter((todo) => todo.done !== true)
+          const todoList = unfinished.length ? ` Current unfinished TODOs: ${unfinished.map((todo) => `${todo.id} (${todo.text ?? todo.id})`).join('; ')}.` : ''
+          const question = `Please explain this task's current status.${missingFields ? ` Currently missing: ${missingFields}.` : ''}${todoList} If model or effort is missing, discover actual values from host/runtime evidence and report confirmed values using patch.tasks with this same task id. If current TODOs remain incomplete, inspect the latest task TODOs, resolve the actual work, then report done:true only for completed items. Include a check_replies explanation for this check. If metadata is unavailable, explain why and leave values absent; do not guess.`
+          db.prepare("INSERT INTO checks VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)")
+            .run(randomUUID(), runId, task.id, owner, question, new Date(stamp).toISOString())
+        }
+      }
+      const activeIds = new Set(active.map((task) => task.id))
+      for (const task of state.tasks ?? []) if (!activeIds.has(task.id)) {
+        db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, task.id)
+        const priorClock = db.prepare('SELECT owner FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null } | undefined
+        const owner = task.owner?.trim() || null
+        if (priorClock && priorClock.owner !== owner) {
+          db.prepare('UPDATE task_clocks SET owner=?, observed_at=?, replied_at=NULL WHERE run_id=? AND task_id=?')
+            .run(owner, stamp, runId, task.id)
+        }
+      }
+      if (ended) {
+        db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND status='pending'").run(runId)
+      }
     },
     close(): void { db.close() },
   }

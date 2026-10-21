@@ -10,7 +10,7 @@ Node 24 프로세스 하나가 Express 5, MCP SDK의 Streamable HTTP, SQLite와 
 | [server/main.ts](../server/main.ts) | 환경 검증, DB·HTTP 수명 주기와 정적 파일 제공 설정 |
 | [server/app.ts](../server/app.ts) | MCP report/ask/get_run, HTTP API, SSE, 질문 대기와 문서 watcher 조정 |
 | [server/progress.ts](../server/progress.ts) | progress.py 호환 검증·병합·시간·종료 규칙 |
-| [server/store.ts](../server/store.ts) | SQLite 스키마·트랜잭션·스냅샷 |
+| [server/store.ts](../server/store.ts) | SQLite 스키마·트랜잭션·스냅샷, 작업별 체크인 관찰 기준·쿨다운·요청 이력과 수명주기 조정 |
 | [server/docs.ts](../server/docs.ts) | Markdown 읽기, 실제 경로 경계 검사, diff·변경 감시 |
 | [web/src/App.tsx](../web/src/App.tsx) | hash 경로, 상태 갱신, 프로젝트·run 선택 |
 | [web/src/Office.tsx](../web/src/Office.tsx), [Lobby.tsx](../web/src/Lobby.tsx), [Panels.tsx](../web/src/Panels.tsx) | 사무실·빌딩·결재·기획서·업무 일지 |
@@ -20,6 +20,8 @@ Node 24 프로세스 하나가 Express 5, MCP SDK의 Streamable HTTP, SQLite와 
 ## 데이터 흐름과 외부 경계
 
 터미널의 basic-team(Office 모드) → `POST /mcp`의 report → 검증·병합 → SQLite 저장 → SSE `changed` → 화면이 `/api/state`를 다시 읽는다. ask는 SQLite에 질문을 저장하고 HTTP 호출을 대기시킨다. 브라우저 답변은 저장 후 대기 호출에 전달된다. 호출 취소·서버 재시작 뒤에도 질문은 DB에 남고 같은 ask_id로 재개한다. 상세 계약은 [결재 요구사항](requirements/decisions-integration.md)에 있다.
+
+체크인은 로컬 구현되었으며 전체 검사·독립 리뷰는 진행 중이다. 진행중 task의 정체·model/effort 누락을 다음 report에서 검사하고 같은 트랜잭션에 관찰 기준·요청·명시 응답·종료를 저장한다. `report.checks`는 pending, 읽기 전용 `get_run.checks`는 전체 이력을 전달한다. 별도 타이머·push·UI 없이 적응된 클라이언트가 응답을 읽고 `check_replies`와 확인한 task 값을 보고해야 한다. 실제 원격 런타임 정보는 서버가 알아내지 않는다. [체크인 요구사항](requirements/decisions-integration.md#에이전트-체크인)과 [변경 010](changes/010-agent-check-ins.md)에서 확정 계약과 검증 상태를 관리한다.
 
 등록된 Markdown은 읽기 전용으로 감시한다. `doc-changed` 공지는 화면을 갱신하고 다음 report가 이전 baseline과 diff를 반환한다. [문서 경계와 복구](requirements/documents.md)를 따른다.
 

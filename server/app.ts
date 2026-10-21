@@ -144,6 +144,21 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     const existing = args.run_id ? db.getRun(args.run_id) : undefined
     if (args.run_id && !existing) toolError(`unknown run_id: ${args.run_id}`)
     if (existing && existing.project_path !== projectPath) toolError('run_id belongs to a different project')
+    if (args.check_replies?.length && !args.run_id) toolError('check_replies require run_id')
+    const duplicateReplies = new Map<string, string>()
+    for (const reply of args.check_replies ?? []) {
+      const prior = duplicateReplies.get(reply.check_id)
+      if (prior !== undefined && prior !== reply.answer) toolError(`conflicting check_replies for check_id: ${reply.check_id}`)
+      duplicateReplies.set(reply.check_id, reply.answer)
+    }
+    for (const [id, answer] of duplicateReplies) {
+      const check = db.check(id)
+      if (!check || check.run_id !== args.run_id || db.getRun(check.run_id)?.project_path !== projectPath) toolError('unknown check_id for run')
+      if (check.status === 'closed') toolError('check is closed')
+      if (check.status === 'answered' && check.answer !== answer) toolError(`conflicting answer for check_id: ${id}`)
+    }
+    const previousState = existing?.state
+    const wasEnded = existing?.ended_at !== null && existing?.ended_at !== undefined
     const state = apply(existing?.state ?? INIT(args.title ?? basename(projectPath)), args.patch, stamp)
     const run: RunRow = existing ?? {
       id: '', project_path: projectPath, state, doc_path: null, doc_baseline: null,
@@ -174,6 +189,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     run.last_report_at = new Date(stamp).toISOString()
     let closedIds: string[] = []
     db.transaction(() => {
+      for (const [id, answer] of duplicateReplies) db.replyCheck(id, answer, stamp)
       db.upsertProject(projectPath, inWorkspace(projectPath, root), stamp)
       if (!existing) {
         const created = db.createRun(projectPath, state, stamp)
@@ -181,6 +197,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         run.last_report_at = created.last_report_at
       }
       db.saveRun(run)
+      db.reconcileChecks(run.id, previousState, run.state, stamp, wasEnded)
       closedIds = args.close_ask_ids ? db.closeAsks(run.id, args.close_ask_ids) : []
       if (ended) closedIds = [...new Set([...closedIds, ...db.closeAsks(run.id)])]
     })
@@ -189,7 +206,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     else if (previousResolved !== newResolved || !watchers.has(run.id)) startWatcher(run)
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
-    return { run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at }
+    return { run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at, checks: db.checks(run.id, true) }
   }
 
   const askTool = async (args: AskArgs, extra: { signal?: AbortSignal }, response: Response): Promise<AskResult> => {
@@ -217,6 +234,8 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
     'tasks는 id, decisions는 title, reviews는 round+reviewer로 merge됩니다. task.todos도 같은 작업 안에서 id로 보낸 필드만 merge하고 미전송 항목과 최초 순서를 유지합니다. 새 todo의 text 생략 시 id를 쓰며, 체크 예: tasks:[{id:"FE",todos:[{id:"FE-2",done:true}]}].',
     'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
+    'report 응답의 checks는 작업 상태 설명을 요청합니다. 확인한 뒤 check_replies:[{check_id,answer}]로 답하세요. 답변은 설명일 뿐 성공 판정이 아닙니다. model/effort가 없으면 host/runtime에서 실제 값을 확인해 같은 task id patch로 보고하고, 확인할 수 없으면 이유를 설명하고 값을 비워 두세요.',
+    '체크인이 남은 TODO를 보여주면 실제 작업을 해결한 뒤 해당 id를 done:true로 보고하세요. 미완료 TODO가 남은 task는 완료할 수 없고, run stage 완료에도 모든 task의 TODO 완료가 필요합니다. 중단은 미완료 TODO를 보존하는 비성공 종료입니다.',
   ].join('\n')
   const schema = z.object({
     project_path: z.string().describe('프로젝트의 절대 경로'),
@@ -259,6 +278,9 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       }).strict()).optional().describe('round+reviewer로 merge할 리뷰 목록'),
     }).strict().describe('기존 상태에 병합할 진행 변경; 알 수 없는 키는 거부'),
     close_ask_ids: z.array(z.string()).optional().describe('종료할 질문 id 목록; patch 밖 최상위 필드'),
+    check_replies: z.array(z.object({
+      check_id: z.string().trim().min(1), answer: z.string().trim().min(1),
+    }).strict()).optional().describe('report 응답 checks에 대한 설명; 기존 run_id 필수'),
   }).strict()
   const askSchema = z.object({
     run_id: z.string().describe('report 응답의 실행 id'),
@@ -275,7 +297,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     server.registerTool('report', { description: usage, inputSchema: schema }, async (args) => jsonResult(report(args)))
     server.registerTool('ask', { description: 'Ask the user for a decision and wait for an answer', inputSchema: askSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
     server.registerTool('get_run', {
-      description: 'Read a run and its pending asks without changing state',
+      description: 'Read a run, asks, and check history without changing state',
       inputSchema: z.object({ run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id') }).strict(),
       annotations: { readOnlyHint: true },
     }, async ({ run_id }) => {
@@ -285,6 +307,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         run_id: run.id, project_path: run.project_path, stage: run.state.stage, ended_at: run.ended_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
         asks: db.snapshot(() => false).asks.filter((ask) => ask.run_id === run.id),
+        checks: db.checks(run.id),
       })
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })

@@ -164,6 +164,17 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
     }
     if (word !== '완료') next.stage = '완료'
   }
+  const unfinished = mergedTasks.flatMap((task) => {
+    const todos = (task.todos ?? []).filter((todo) => todo.done !== true).map((todo) => todo.id)
+    return todos.length ? [{ task: task.id, todos }] : []
+  })
+  for (const task of mergedTasks.filter((task) => task.status === '완료')) {
+    const todos = unfinished.find((entry) => entry.task === task.id)?.todos
+    if (todos) fail(`task ${task.id}: unfinished TODOs: ${todos.join(', ')}`)
+  }
+  if (next.stage?.split(' ')[0] === '완료' && unfinished.length) {
+    fail(`run stage 완료 has unfinished TODOs: ${unfinished.map(({ task, todos }) => `${task}: ${todos.join(', ')}`).join('; ')}; resolve them or interrupt the run`)
+  }
   next.updated = updatedAt
   return next
 }

@@ -36,6 +36,7 @@ export default function App() {
   const [selectedAskId, setSelectedAskId] = useState<string | null>(null)
   const [documentRevision, setDocumentRevision] = useState(0)
   const [visitorEnabled, setVisitorEnabled] = useState(() => Boolean(readRoute().runId))
+  const [overviewOpen, setOverviewOpen] = useState(false)
   const snapshotRef = useRef(snapshot)
   const routeRef = useRef(route)
   snapshotRef.current = snapshot
@@ -159,7 +160,7 @@ export default function App() {
         {notice?.runId === selectedRun.id && <DocNotice path={notice.path} onDismiss={() => setNotice(null)} />}
         <div className="office-layout">
           <section className="office-column" aria-label="사무실 현황">
-            <Office key={selectedRun.id} run={selectedRun} projectRuns={activeProject.runs} asks={floorAsks} now={now} onOpenAsk={setSelectedAskId} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} floors={visitorFloors} onVisitProject={(path) => {
+            <Office key={selectedRun.id} run={selectedRun} projectRuns={activeProject.runs} asks={floorAsks} now={now} onOpenAsk={setSelectedAskId} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} overviewOpen={overviewOpen} onOverviewOpenChange={setOverviewOpen} floors={visitorFloors} onVisitProject={(path) => {
               const latestProject = snapshotRef.current.projects.find((project) => project.path === path)
               const destination = latestProject && !latestProject.hidden && chooseProjectRun(latestProject)
               if (destination) window.location.hash = `#/run/${encodeURIComponent(destination.id)}`

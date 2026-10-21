@@ -101,4 +101,43 @@ describe('progress apply', () => {
     expect(closed.tasks?.[0].finished).toBe(new Date(2_000).toISOString())
     expect(repeated.tasks?.[0].finished).toBe(closed.tasks?.[0].finished)
   })
+
+  it.each([
+    [{ tasks: [{ id: 'T', status: '완료', todos: [{ id: 'OPEN', done: false }] }] }, 'task T: unfinished TODOs: OPEN'],
+    [{ tasks: [{ id: 'T', status: '완료', todos: [{ id: 'OPEN' }] }] }, 'task T: unfinished TODOs: OPEN'],
+  ])('rejects a completed task with unchecked TODOs %j', (patch, error) => {
+    expect(() => apply({}, patch, 1_000)).toThrow(error)
+  })
+
+  it('rejects unchecked TODOs added to an existing completed task and accepts a same-patch repair', () => {
+    const completed = apply({}, { tasks: [{ id: 'T', status: '완료', todos: [{ id: 'DONE', done: true }] }] }, 1_000)
+    expect(() => apply(completed, { tasks: [{ id: 'T', todos: [{ id: 'NEW', text: 'New work' }] }] }, 2_000))
+      .toThrow('task T: unfinished TODOs: NEW')
+    const working = apply({}, { tasks: [{ id: 'T', status: '진행중', todos: [{ id: 'WORK', done: false }] }] }, 1_000)
+    expect(apply(working, { tasks: [{ id: 'T', status: '완료', todos: [{ id: 'WORK', done: true }] }] }, 2_000).tasks)
+      .toMatchObject([{ status: '완료', todos: [{ id: 'WORK', done: true }] }])
+  })
+
+  it('rejects explicit and automatic successful run completion with TODOs on interrupted tasks', () => {
+    expect(() => apply({}, { stage: '완료', tasks: [
+      { id: 'STOP', status: '중단', todos: [{ id: 'LEFT' }] },
+    ] }, 1_000)).toThrow('run stage 완료 has unfinished TODOs: STOP: LEFT')
+    expect(() => apply({}, { tasks: [
+      { id: 'FINISH', lane: 'finish', status: '완료', todos: [{ id: 'DONE', done: true }] },
+      { id: 'STOP', status: '중단', todos: [{ id: 'LEFT', text: 'left over' }] },
+    ] }, 1_000)).toThrow('run stage 완료 has unfinished TODOs: STOP: LEFT')
+  })
+
+  it('allows non-successful run interruption with open TODOs but still rejects completed tasks with them', () => {
+    expect(apply({}, { stage: '중단', tasks: [{ id: 'T', status: '진행중', todos: [{ id: 'LEFT' }] }] }, 1_000).stage).toBe('중단')
+    expect(() => apply({}, { stage: '중단', tasks: [{ id: 'T', status: '완료', todos: [{ id: 'LEFT' }] }] }, 1_000))
+      .toThrow('task T: unfinished TODOs: LEFT')
+  })
+
+  it('allows successful completion when there are no unfinished TODOs', () => {
+    expect(apply({}, { stage: '완료', tasks: [
+      { id: 'NO-TODOS', status: '완료' },
+      { id: 'DONE', status: '중단', todos: [{ id: 'FINISHED', done: true }] },
+    ] }, 1_000).stage).toBe('완료')
+  })
 })
