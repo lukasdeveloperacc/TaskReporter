@@ -208,9 +208,11 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
     return {
-      run_id: run.id, doc_changes: changes, ...(args.include_state === false ? {} : { state: run.state }), ended_at: run.ended_at, checks: db.checks(run.id, true),
+      checks: db.checks(run.id, true),
       asks: db.asks(run.id).filter((ask) => ask.status === 'answered')
         .map((ask) => ({ ask_id: ask.id, status: 'answered' as const, answer: ask.answer! })),
+      run_id: run.id, doc_changes: changes, ended_at: run.ended_at,
+      ...(args.include_state === false ? {} : { state: run.state }),
     }
   }
 
@@ -336,10 +338,10 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       const run = db.getRun(run_id)
       if (!run) toolError(`unknown run_id: ${run_id}`)
       return jsonResult({
+        checks: db.checks(run.id),
+        asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
         run_id: run.id, project_path: run.project_path, state: run.state, stage: run.state.stage, ended_at: run.ended_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
-        asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
-        checks: db.checks(run.id),
       })
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })

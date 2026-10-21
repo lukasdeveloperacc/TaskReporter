@@ -194,8 +194,12 @@ export function openStore(file: string) {
         if (!ended && !pending && (missing && !cooldown || stamp - observed >= STALE_MS && !cooldown)) {
           const missingFields = [!task.model?.trim() && 'model', !task.effort?.trim() && 'effort'].filter(Boolean).join(', ')
           const unfinished = (task.todos ?? []).filter((todo) => todo.done !== true)
-          const todoList = unfinished.length ? ` Current unfinished TODOs: ${unfinished.map((todo) => `${todo.id} (${todo.text ?? todo.id})`).join('; ')}.` : ''
-          const question = `Please explain this task's current status.${missingFields ? ` Currently missing: ${missingFields}.` : ''}${todoList} If model or effort is missing, discover actual values from host/runtime evidence and report confirmed values using patch.tasks with this same task id. If current TODOs remain incomplete, inspect the latest task TODOs, resolve the actual work, then report done:true only for completed items. Include a check_replies explanation for this check. If metadata is unavailable, explain why and leave values absent; do not guess.`
+          const todoList = unfinished.length ? `미완료 TODO: ${unfinished.map((todo) => `${todo.id} (${todo.text ?? todo.id})`).join('; ')}. get_run으로 최신 TODO를 확인하고 실제 끝난 항목만 done:true로 보고하세요.` : ''
+          const metadata = missingFields ? `누락: ${missingFields}. host/runtime에서 실제 값을 확인해 같은 task id의 patch.tasks로 보고하세요. 확인 불가하면 이유를 설명하고 값을 비워 두세요(추측 금지).` : ''
+          const question = [
+            `${stamp - observed >= STALE_MS ? '30분째 변화 없음: ' : ''}현재 상태·막힌 점을 check_replies로 알려 주세요.`,
+            [metadata, todoList].filter(Boolean).join(' '),
+          ].filter(Boolean).join('\n')
           db.prepare("INSERT INTO checks VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)")
             .run(randomUUID(), runId, task.id, owner, question, new Date(stamp).toISOString())
         }

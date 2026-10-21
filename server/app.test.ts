@@ -149,8 +149,8 @@ describe('office app', () => {
     const runId = String(first.run_id)
     const checks = first.checks as { id: string; question: string; status: string }[]
     expect(checks).toHaveLength(1)
-    expect(checks[0]!.question).toContain('Currently missing: model, effort')
-    expect(checks[0]!.question).toContain('model or effort')
+    expect(checks[0]!.question).toContain('누락: model, effort')
+    expect(checks[0]!.question).toContain('실제 값을 확인')
     const checkId = checks[0]!.id
     const before = db.checks(runId)
     expect(parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!.checks).toEqual(before)
@@ -186,11 +186,39 @@ describe('office app', () => {
     ] } }))!
     const checks = first.checks as { task_id: string; question: string }[]
     expect(checks.map((check) => check.task_id).sort()).toEqual(['blank', 'effort-only', 'model-only'])
-    expect(checks.find((check) => check.task_id === 'model-only')!.question).toContain('Currently missing: effort')
-    expect(checks.find((check) => check.task_id === 'effort-only')!.question).toContain('Currently missing: model')
-    expect(checks.find((check) => check.task_id === 'blank')!.question).toContain('Currently missing: model, effort')
+    expect(checks.find((check) => check.task_id === 'model-only')!.question).toContain('누락: effort')
+    expect(checks.find((check) => check.task_id === 'effort-only')!.question).toContain('누락: model')
+    expect(checks.find((check) => check.task_id === 'blank')!.question).toContain('누락: model, effort')
     const repeated = parseTool(await report(client, base, { run_id: String(first.run_id), patch: {} }))!
     expect((repeated.checks as { id: string }[]).map((check) => check.id).sort()).toEqual((first.checks as { id: string }[]).map((check) => check.id).sort())
+    await client.close()
+  })
+
+  it('uses short Korean check prompts with conditional guidance and presents checks/asks before state', async () => {
+    let stamp = 1_800_000_000_000
+    const { base, client } = await start({ now: () => stamp })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중', model: 'actual', effort: 'high' }] } }))!
+    const runId = String(first.run_id)
+    expect(first.checks).toEqual([])
+    stamp += 1_800_000
+    const response = await report(client, base, { run_id: runId, patch: {} })
+    const stale = parseTool(response)!
+    const question = (stale.checks as { question: string }[])[0]!.question
+    expect(question).toBe('30분째 변화 없음: 현재 상태·막힌 점을 check_replies로 알려 주세요.')
+    expect(question).not.toContain('누락:')
+    expect(question).not.toContain('미완료 TODO:')
+    for (const value of [stale, response.structuredContent!]) {
+      const keys = Object.keys(value)
+      expect(keys.indexOf('checks')).toBeLessThan(keys.indexOf('state'))
+      expect(keys.indexOf('asks')).toBeLessThan(keys.indexOf('state'))
+    }
+    const missing = parseTool(await report(client, base, { patch: { tasks: [{ id: 'M', status: '진행중' }] } }))!
+    const missingQuestion = (missing.checks as { question: string }[])[0]!.question
+    expect(missingQuestion).not.toContain('30분째')
+    expect(missingQuestion).toContain('누락: model, effort')
+    expect(missingQuestion).toContain('확인 불가하면 이유')
+    expect(missingQuestion).not.toContain('미완료 TODO:')
+    expect(missingQuestion.split('\n')).toHaveLength(2)
     await client.close()
   })
 
@@ -208,7 +236,7 @@ describe('office app', () => {
     const check = (stale.checks as { id: string; question: string }[])[0]!
     expect(check.question).toContain('OPEN (Pending work)')
     expect(check.question).not.toContain('DONE (Finished item)')
-    expect(check.question).toContain('inspect the latest task TODOs')
+    expect(check.question).toContain('get_run으로 최신 TODO를 확인')
     const updated = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{
       id: 'T', todos: [{ id: 'LATER', text: 'Added while pending' }],
     }] } }))!
