@@ -8,7 +8,7 @@ basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다.
 
 1. lukas-plugin을 설치한 Claude Code 또는 Codex에서 `office MCP 켜줘`라고 요청합니다. `mcp-setup` 스킬이 MCP(`http://127.0.0.1:4780/mcp`)를 등록하고 `ghcr.io/lukasdeveloperacc/taskreporter:latest`로 `lukas-office` 컨테이너를 `--restart unless-stopped`로 띄웁니다. 데이터는 `taskreporter_office-data` volume에 보존됩니다.
 2. 워크스페이스는 `WORKSPACE_ROOT`(lukas-plugin 기본 `$HOME`)를 호스트와 **같은 절대 경로**에 읽기 전용으로 연결합니다. 다른 경로를 쓰려면 MCP를 켜기 전에 `WORKSPACE_ROOT`를 export합니다. 이 범위 밖의 프로젝트도 층과 진행은 표시되지만 기획서 열람·변경 감지는 불가능합니다.
-3. 결재 대기(295초)보다 도구 제한 시간이 길어야 합니다. Claude는 `MCP_TOOL_TIMEOUT=325000 claude`로 시작하고, Codex는 `${CODEX_HOME:-$HOME/.codex}/config.toml`의 `[mcp_servers.office]`에 `tool_timeout_sec = 325`를 둡니다([Codex MCP 설정](https://developers.openai.com/codex/mcp/)).
+3. 결재 대기(기본 100초)보다 도구 제한 시간이 길어야 합니다. Claude는 `MCP_TOOL_TIMEOUT=325000 claude`로 시작하고, Codex는 `${CODEX_HOME:-$HOME/.codex}/config.toml`의 `[mcp_servers.office]`에 `tool_timeout_sec = 325`를 둡니다([Codex MCP 설정](https://developers.openai.com/codex/mcp/)).
 4. 새 세션에서 Claude는 `/basic-team <작업 요청>`, Codex는 `$basic-team <작업 요청>`으로 실행합니다. office 도구가 있으면 basic-team이 Office 모드로 보고합니다. 작업할 저장소가 프로젝트 층으로 등록됩니다.
 
 브라우저에서 [사무실 열기](http://127.0.0.1:4780)를 선택합니다. 이미지를 갱신하려면 `docker pull ghcr.io/lukasdeveloperacc/taskreporter:latest` 후 office MCP를 끄고 다시 켭니다. MCP를 끄면 컨테이너만 지우고 volume은 남깁니다. 포트는 호스트의 `127.0.0.1:4780`에만 공개되며 컨테이너 내부의 `HOST=0.0.0.0`은 이 localhost 공개 포트를 위한 설정입니다.
@@ -29,11 +29,11 @@ docker compose logs -f office
 
 ## 진행 보고와 결재
 
-`report`가 진행을 보내고 `ask`가 대표실에 결재 선택지를 만듭니다. 기본 대기는 295,000ms이며 답이 없으면 `pending`과 `ask_id`를 반환합니다. 스킬은 같은 id로 재호출합니다. 터미널에서 답하려면 Esc로 도구 대기를 끊고 채팅에 답하세요. 리더가 다음 report의 `close_ask_ids`로 앱의 서류를 닫습니다. 기획서 변경 diff가 보고되면 basic-team이 재계획 여부를 묻습니다.
+`report`가 진행을 보내고 `ask`가 대표실에 결재 선택지를 만듭니다. 기본 대기는 100,000ms(기존 295초에서 단축)이며 답이 없으면 `status: "pending"`, `ask_id`, `retry_after_sec: 0`, 재호출 안내 `message`를 반환합니다. 스킬은 같은 id로 재호출합니다. 터미널에서 답하려면 Esc로 도구 대기를 끊고 채팅에 답하세요. 리더가 다음 report의 `close_ask_ids`로 앱의 서류를 닫습니다. 기획서 변경 diff가 보고되면 basic-team이 재계획 여부를 묻습니다.
 
 첫 `report`에서 받은 `run_id`를 이후 보고·질문·조회에 재사용합니다. `close_ask_ids`는 `patch` 밖 최상위 인자이며, stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작합니다. task는 id, decision은 title, review는 round+reviewer로 병합합니다. owner가 좌석을 정하며 `reviewer-*`는 감사팀, `plan-*`는 회의실에 배치합니다. model은 전체 모델 ID, effort는 host에서 확인한 값만 보내고 모르면 생략합니다.
 
-타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 병합된 `state`와 `ended_at`을 포함하고, 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending 질문을 조회합니다.
+타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 병합된 `state`와 `ended_at`을 포함하고, 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending·answered 질문을 조회합니다. `report.asks`는 `{ask_id,status:"answered",answer}`를 반복 전달하고 `get_run.asks`는 기존 `id` 등을 유지하면서 `ask_id`를 추가합니다. `ask_id`로 중복 처리하세요. 조회·전송은 수신 확인이 아니며, 보고가 없는 결재 대기 중에는 같은 `ask_id` 재호출을 계속해야 합니다. MCP `tools/list`의 각 도구 `outputSchema`에서 `asks` 및 `retry_after_sec` 지원을 확인할 수 있습니다.
 
 ### 에이전트 체크인
 

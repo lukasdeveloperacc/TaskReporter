@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.ts'
 import { openStore } from './store.ts'
-import type { ProgressData } from '../shared/contract.ts'
+import { ASK_WAIT_MS, type ProgressData } from '../shared/contract.ts'
 
 const fixture = readFileSync(new URL('./fixtures/progress-example.md', import.meta.url), 'utf8')
 const golden = JSON.parse(readFileSync(new URL('./fixtures/progress-example.expected.json', import.meta.url), 'utf8')) as ProgressData
@@ -134,7 +134,8 @@ describe('office app', () => {
     expect(Object.keys(todos.items.properties)).toEqual(['id', 'text', 'phase', 'done', 'detail'])
     expect(Object.values(todos.items.properties).every((field) => field.description.length > 0)).toBe(true)
     expect(reportTool.description).toContain('todos:[{id:"FE-2",done:true}]')
-    expect(reportTool.description!.split('\n')).toHaveLength(7)
+    expect(reportTool.description).toContain('report.asks')
+    expect(reportTool.description).toContain('pending.retry_after_sec')
     expect(client.getInstructions()).toBe(reportTool.description)
     expect(tools.every((tool) => tool.inputSchema.additionalProperties === false)).toBe(true)
     expect(tools.find((tool) => tool.name === 'get_run')!.annotations?.readOnlyHint).toBe(true)
@@ -538,11 +539,65 @@ describe('office app', () => {
     await client.close()
   })
 
+  it('uses a 100-second default wait without waiting in real time', async () => {
+    expect(ASK_WAIT_MS).toBe(100_000)
+    const { base, client } = await start({ askWaitMs: undefined })
+    const runId = String(parseTool(await report(client, base, { patch: {} }))!.run_id)
+    const timer = vi.spyOn(globalThis, 'setTimeout')
+    const waiting = ask(client, { run_id: runId, question: 'Default wait?', options: ['Yes'] }).catch(() => undefined)
+    try {
+      for (let attempt = 0; attempt < 50 && !db.asks(runId).length; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(timer.mock.calls.some((call) => call[1] === 100_000)).toBe(true)
+    } finally {
+      timer.mockRestore()
+      await client.close()
+      await waiting
+    }
+  })
+
+  it('replays answered asks after disconnect and database restart, with discoverable output schemas', async () => {
+    db.close()
+    const file = join(dir, 'answers.db')
+    db = openStore(file)
+    const { base, client } = await start()
+    const tools = (await client.listTools()).tools
+    for (const name of ['report', 'get_run']) {
+      const properties = tools.find((tool) => tool.name === name)!.outputSchema!.properties as Record<string, unknown>
+      expect(properties.asks).toBeDefined()
+    }
+    const askProperties = tools.find((tool) => tool.name === 'ask')!.outputSchema!.properties as Record<string, unknown>
+    expect(askProperties.retry_after_sec).toBeDefined()
+    const runId = String(parseTool(await report(client, base, { patch: {} }))!.run_id)
+    const pending = parseTool(await ask(client, { run_id: runId, question: 'Persist?', options: ['Yes'] }))!
+    const askId = String(pending.ask_id)
+    await client.close()
+    expect((await fetch(`${base}/api/asks/${askId}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answer: 'Yes' }) })).status).toBe(200)
+    closeApp!()
+    await server!.close()
+    db.close()
+    db = openStore(file)
+    const restarted = await start()
+    const expected = [{ ask_id: askId, status: 'answered', answer: 'Yes' }]
+    const otherRun = String(parseTool(await report(restarted.client, restarted.base, { patch: {} }))!.run_id)
+    expect(parseTool(await report(restarted.client, restarted.base, { run_id: otherRun, patch: {} }))!.asks).toEqual([])
+    const before = db.asks(runId)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(parseTool(await report(restarted.client, restarted.base, { run_id: runId, patch: {} }))!.asks).toEqual(expected)
+      const result = parseTool(await restarted.client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+      expect(result.asks).toMatchObject([{ ...expected[0], id: askId, question: 'Persist?', options: ['Yes'] }])
+    }
+    expect(db.asks(runId)).toEqual(before)
+    expect(parseTool(await ask(restarted.client, { run_id: runId, ask_id: askId, question: 'ignored', options: ['Yes'] }))).toEqual(expected[0])
+    await restarted.client.close()
+  })
+
   it('returns pending after timeout, reuses ask_id, and permits an answered recall after the run ends', async () => {
     const { base, client } = await start()
     const runId = String(parseTool(await report(client, base, { patch: { summary: 'active' } }))!.run_id)
     const first = parseTool(await ask(client, { run_id: runId, question: 'Continue?', options: ['Yes', 'No'] }))!
-    expect(first.status).toBe('pending')
+    expect(first).toMatchObject({ status: 'pending', retry_after_sec: 0, message: expect.stringContaining('같은 ask_id') })
     const askId = String(first.ask_id)
     const otherRunId = String(parseTool(await report(client, base, { project_path: join(workspace, 'other'), patch: {} }))!.run_id)
     expect((await ask(client, { run_id: otherRunId, ask_id: askId, question: '?', options: ['Yes'] })).isError).toBe(true)

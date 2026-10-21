@@ -1,5 +1,5 @@
 export const PORT = 4780
-export const ASK_WAIT_MS = 295_000
+export const ASK_WAIT_MS = 100_000
 export const STALE_MS = 1_800_000
 
 export const STAGES = ['계획', '구현', '리뷰', '수정', '마무리', '완료', '중단'] as const
@@ -118,7 +118,7 @@ export type ReportArgs = {
   check_replies?: { check_id: string; answer: string }[]
 }
 
-export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null; checks: CheckView[] }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[] }
 
 export type AskArgs = {
   run_id: string
@@ -128,9 +128,11 @@ export type AskArgs = {
   ask_id?: string
 }
 
+export type AnsweredAsk = { ask_id: string; status: 'answered'; answer: string }
+
 export type AskResult =
   | { status: 'answered'; answer: string; ask_id: string }
-  | { status: 'pending'; ask_id: string }
+  | { status: 'pending'; ask_id: string; retry_after_sec: number; message: string }
 
 export function floorStatus(project: ProjectView, asks: AskView[], now: number): 'ask' | 'away' | 'on' | 'off' {
   const activeRuns = project.runs.filter((run) => run.ended_at === null)

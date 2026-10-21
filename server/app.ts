@@ -45,8 +45,8 @@ function toolError(message: string): never {
   throw new Error(message)
 }
 
-function jsonResult(value: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] }
+function jsonResult(value: Record<string, unknown>) {
+  return { structuredContent: value, content: [{ type: 'text' as const, text: JSON.stringify(value) }] }
 }
 
 function activeDoc(run: RunRow, workspaceRoot: string): string | null {
@@ -132,7 +132,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       waiters.get(askId)!.add(settle)
       signal?.addEventListener('abort', onAbort, { once: true })
       response.on('close', onResponseClose)
-      timeout = setTimeout(() => settle({ result: { status: 'pending', ask_id: askId } }), askWaitMs)
+      timeout = setTimeout(() => settle({ result: { status: 'pending', ask_id: askId, retry_after_sec: 0, message: '같은 ask_id로 ask를 다시 호출하세요. 새 질문을 만들지 마세요.' } }), askWaitMs)
       if (signal?.aborted || response.destroyed) onAbort()
     })
   }
@@ -207,7 +207,11 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     else if (previousResolved !== newResolved || !watchers.has(run.id)) startWatcher(run)
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
-    return { run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at, checks: db.checks(run.id, true) }
+    return {
+      run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at, checks: db.checks(run.id, true),
+      asks: db.asks(run.id).filter((ask) => ask.status === 'answered')
+        .map((ask) => ({ ask_id: ask.id, status: 'answered' as const, answer: ask.answer! })),
+    }
   }
 
   const askTool = async (args: AskArgs, extra: { signal?: AbortSignal }, response: Response): Promise<AskResult> => {
@@ -230,6 +234,8 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   }
 
   const usage = [
+    'report.asks는 답변된 결재를 {ask_id,status:answered,answer}로 매번 재전달합니다. ask_id로 중복 처리하세요. get_run.asks는 pending과 answered를 조회하며 수신 확인 상태를 변경하지 않습니다.',
+    'ask 기본 대기는 100초입니다. pending.retry_after_sec 뒤 같은 ask_id로 다시 호출하세요. report가 호출되지 않는 동안에도 ask 재호출을 계속해야 답을 받습니다.',
     '첫 report 응답의 run_id를 받아 이후 report와 ask, get_run에서 재사용하세요.',
     'close_ask_ids는 patch 안이 아닌 report 최상위에 넣으세요.',
     'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
@@ -288,18 +294,40 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     question: z.string().describe('사용자에게 물을 질문'),
     options: z.array(z.string()).min(1).max(6).describe('선택지 1~6개'),
     recommended: z.string().optional().describe('options에 포함된 추천 선택지'),
-    ask_id: z.string().optional().describe('이미 생성한 질문의 응답을 다시 기다릴 때 사용'),
+    ask_id: z.string().optional().describe('pending.retry_after_sec 뒤 같은 ask_id로 재호출; answered는 저장된 답을 즉시 반환'),
   }).strict().refine((args) => args.recommended === undefined || args.options.includes(args.recommended), {
     path: ['recommended'], message: 'recommended must be one of the options',
   })
 
+  const answeredAskSchema = z.object({ ask_id: z.string(), status: z.literal('answered'), answer: z.string() })
+  const reportOutputSchema = z.object({
+    run_id: z.string(), doc_changes: z.array(z.object({ path: z.string(), diff: z.string() })),
+    state: z.record(z.string(), z.unknown()), ended_at: z.string().nullable(), checks: z.array(z.unknown()),
+    asks: z.array(answeredAskSchema).describe('답변된 결재를 반복 전달; ask_id로 중복 처리, 조회는 수신 확인이 아님'),
+  })
+  const askOutputSchema = z.object({
+    status: z.enum(['pending', 'answered']), ask_id: z.string(), answer: z.string().optional(),
+    retry_after_sec: z.number().nonnegative().optional().describe('pending 후 동일 ask_id 재호출까지 대기할 초; 0이면 즉시 재호출'),
+    message: z.string().optional().describe('pending 재호출 안내'),
+  })
+  const runAskSchema = z.object({
+    id: z.string(), ask_id: z.string(), run_id: z.string(), question: z.string(), options: z.array(z.string()),
+    recommended: z.string().nullable(), status: z.enum(['pending', 'answered']), answer: z.string().nullable(),
+  })
+  const getRunOutputSchema = z.object({
+    run_id: z.string(), project_path: z.string(), stage: z.string().optional(), ended_at: z.string().nullable(),
+    tasks: z.array(z.unknown()), decisions: z.array(z.unknown()), reviews: z.array(z.unknown()),
+    asks: z.array(runAskSchema).describe('pending과 answered 결재; answered는 ask_id로 중복 처리'), checks: z.array(z.unknown()),
+  })
+
   app.post('/mcp', async (req, res) => {
     const server = new McpServer({ name: 'office-team-reporter', version: '1.0.0' }, { instructions: usage })
-    server.registerTool('report', { description: usage, inputSchema: schema }, async (args) => jsonResult(report(args)))
-    server.registerTool('ask', { description: 'Ask the user for a decision and wait for an answer', inputSchema: askSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
+    server.registerTool('report', { description: usage, inputSchema: schema, outputSchema: reportOutputSchema }, async (args) => jsonResult(report(args)))
+    server.registerTool('ask', { description: 'Ask the user for a decision; default wait 100 seconds. On pending, wait retry_after_sec then call with the same ask_id. Answered replies remain available through ask, report.asks and get_run.asks; deduplicate by ask_id.', inputSchema: askSchema, outputSchema: askOutputSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
     server.registerTool('get_run', {
-      description: 'Read a run, asks, and check history without changing state',
+      description: 'Read a run, pending and answered asks, and check history without changing state; deduplicate answered asks by ask_id',
       inputSchema: z.object({ run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id') }).strict(),
+      outputSchema: getRunOutputSchema,
       annotations: { readOnlyHint: true },
     }, async ({ run_id }) => {
       const run = db.getRun(run_id)
@@ -307,7 +335,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       return jsonResult({
         run_id: run.id, project_path: run.project_path, stage: run.state.stage, ended_at: run.ended_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
-        asks: db.snapshot(() => false).asks.filter((ask) => ask.run_id === run.id),
+        asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
         checks: db.checks(run.id),
       })
     })

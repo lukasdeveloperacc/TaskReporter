@@ -35,7 +35,7 @@ MCP와 API는 localhost Host와 허용된 HTTP origin을 검사한다. Compose �
 | `HOST` | Node 바인딩 주소, 기본 `127.0.0.1`; Docker 내부는 `0.0.0.0` |
 | `PORT` | 기본 `4780`; 1–65535 정수 |
 | `DB_PATH` | 기본 `./data/office.db`; Docker는 `/data/office.db` |
-| `ASK_WAIT_MS` | ask 1회 대기, 기본 `295000`; 0 초과·300000 이하 |
+| `ASK_WAIT_MS` | ask 1회 대기, 기본 `100000`; 0 초과·300000 이하 |
 | `OFFICE_DEV_ORIGIN` | Vite 개발 화면에 허용할 정확한 localhost HTTP origin |
 | `OFFICE_URL` | replay 드라이버의 MCP 주소, 기본 `http://127.0.0.1:4780/mcp` |
 | `MCP_TOOL_TIMEOUT` | Claude Code 프로세스의 MCP 도구 타임아웃. 검증 실행값 `325000` |

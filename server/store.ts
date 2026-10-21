@@ -124,6 +124,9 @@ export function openStore(file: string) {
         .run(id, runId, question, JSON.stringify(options), recommended ?? null, new Date(now).toISOString())
       return id
     },
+    asks(runId: string): AskRow[] {
+      return (db.prepare("SELECT * FROM asks WHERE run_id=? AND status IN ('pending','answered') ORDER BY created_at, id").all(runId) as StoredAsk[]).map(askRow)
+    },
     getAsk(id: string): AskRow | undefined {
       const row = db.prepare('SELECT * FROM asks WHERE id=?').get(id) as StoredAsk | undefined
       return row && askRow(row)

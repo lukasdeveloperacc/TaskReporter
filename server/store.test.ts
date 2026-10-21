@@ -31,6 +31,8 @@ describe('store', () => {
     expect(db.getAsk(id)).toMatchObject({ options: ['Yes', 'No'], recommended: 'Yes', answer: 'Yes', status: 'answered', created_at: new Date(1000).toISOString() })
     expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/first', in_workspace: true })
     expect(db.listActiveRuns()).toEqual([])
+    expect(db.asks(run.id)).toMatchObject([{ id, status: 'answered', answer: 'Yes' }])
+    expect(db.asks('unknown')).toEqual([])
     expect(db.snapshot(() => true).asks).toEqual([])
   })
 
@@ -153,6 +155,8 @@ describe('store', () => {
     expect(db.closeAsks(run.id)).toEqual([remaining])
     expect(db.closeAsks(run.id)).toEqual([])
     expect(db.snapshot(() => false).asks.map((ask) => ask.id)).toEqual([foreign])
+    expect(db.asks(run.id).map((ask) => ask.id)).toEqual([answered])
+    expect(db.asks(other.id).map((ask) => ask.id)).toEqual([foreign])
     expect(db.getAsk(answered)!.answer).toBe('Yes')
     expect(db.getAsk(selected)).toMatchObject({ status: 'closed', answer: null })
   })
