@@ -136,6 +136,17 @@ describe('visitor elevator App integration', () => {
     window.location.hash = `#/run/${alphaCurrent.id}`
   })
 
+  it('clicks the overview elevator and navigates to the selected project', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '전체 보기' }))
+    fireEvent.click(screen.getByRole('button', { name: '엘리베이터 층간 이동' }))
+    const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
+    fireEvent.click(within(picker).getByRole('button', { name: /Beta 프로젝트/ }))
+    await waitFor(() => expect(window.location.hash).toBe(`#/run/${betaLatest.id}`))
+    expect(await screen.findByRole('heading', { name: 'Beta 프로젝트' })).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+  })
+
   it('walks through the real Office elevator, selects a destination project and keeps run-scoped data correct', async () => {
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Alpha 프로젝트' })).toBeTruthy()

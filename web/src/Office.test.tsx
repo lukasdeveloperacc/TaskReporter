@@ -192,13 +192,38 @@ describe('Office scene controls and coordinates', () => {
     render(<Office run={makeRun([], { ended_at: stamp })} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
     const toggle = screen.getByRole('button', { name: '전체 보기 닫기' })
-    const floor = document.getElementById('office-floor-scroll')
     expect(document.querySelector('[data-employee="leader"] .office-bubble')?.getAttribute('tabindex')).toBeNull()
 
     fireEvent.keyDown(toggle, { key: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(floor)
-    fireEvent.keyDown(floor!, { key: 'Tab' })
+    const elevator = screen.getByRole('button', { name: '엘리베이터 층간 이동' })
+    expect(document.activeElement).toBe(elevator)
+    fireEvent.keyDown(elevator, { key: 'Tab' })
     expect(document.activeElement).toBe(toggle)
+  })
+
+  it.each([false, true])('opens the elevator by clicking without visitor mode (overview: %s)', (overview) => {
+    const onVisitProject = vi.fn()
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} onVisitProject={onVisitProject} floors={[{ projectPath: '/workspace/other', name: 'other', floorNumber: 2, status: '근무 중', disabled: false, current: false }]} />)
+    if (overview) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    const elevator = screen.getByRole('button', { name: '엘리베이터 층간 이동' })
+    fireEvent.click(elevator)
+    const destination = screen.getByRole('button', { name: '2층 · other · 근무 중' })
+    expect(document.activeElement).toBe(destination)
+    fireEvent.keyDown(destination, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+    expect(document.activeElement).toBe(elevator)
+    fireEvent.click(elevator)
+    fireEvent.click(screen.getByRole('button', { name: '2층 · other · 근무 중' }))
+    expect(onVisitProject).toHaveBeenCalledWith('/workspace/other')
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
+  })
+
+  it('disables elevator clicks while another interaction blocks the office', () => {
+    render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} interactionBlocked />)
+    const elevator = screen.getByRole('button', { name: '엘리베이터 층간 이동' }) as HTMLButtonElement
+    expect(elevator.disabled).toBe(true)
+    fireEvent.click(elevator)
+    expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
   })
 
   it('moves only from a focused visitor map and opens the nearby elevator', () => {

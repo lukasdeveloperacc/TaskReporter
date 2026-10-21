@@ -154,6 +154,9 @@
   font-size: 13px;
 }
 .office-elevator {
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
   position: absolute;
   z-index: 4;
   display: grid;
