@@ -35,7 +35,6 @@ export default function App() {
   const [notice, setNotice] = useState<{ runId: string; path: string } | null>(null)
   const [selectedAskId, setSelectedAskId] = useState<string | null>(null)
   const [documentRevision, setDocumentRevision] = useState(0)
-  const [visitorEnabled, setVisitorEnabled] = useState(() => Boolean(readRoute().runId))
   const [overviewOpen, setOverviewOpen] = useState(false)
   const snapshotRef = useRef(snapshot)
   const routeRef = useRef(route)
@@ -74,17 +73,9 @@ export default function App() {
     }, () => setDocumentRevision((revision) => revision + 1))
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
     const onHashChange = () => {
-      const previousRoute = routeRef.current
       const nextRoute = readRoute()
-      const projectPathForRun = (runId: string | null) => runId
-        ? snapshotRef.current.projects.find((project) => project.runs.some((run) => run.id === runId))?.path ?? null
-        : null
-      const previousProjectPath = projectPathForRun(previousRoute.runId)
-      const nextProjectPath = projectPathForRun(nextRoute.runId)
       setRoute(nextRoute)
       setSelectedAskId(null)
-      if (!nextRoute.runId) setVisitorEnabled(false)
-      else if (nextProjectPath && nextProjectPath !== previousProjectPath) setVisitorEnabled(true)
     }
     window.addEventListener('hashchange', onHashChange)
     return () => {
@@ -101,7 +92,6 @@ export default function App() {
   const selectedAsk = snapshot.asks.find((ask) => ask.id === selectedAskId && ask.status === 'pending') ?? null
   const floorAsks = activeProject?.runs.flatMap((run) => snapshot.asks.filter((ask) => ask.run_id === run.id)) ?? []
   const endedRuns = activeProject?.runs.filter((run) => run.ended_at) ?? []
-  useEffect(() => { if (!loading && !loadError && route.runId && !selectedRun) setVisitorEnabled(false) }, [loading, loadError, route.runId, selectedRun])
   const visitorFloors = orderProjectFloors(snapshot.projects).map(({ project, floorNumber }) => ({
     projectPath: project.path,
     name: project.name,
@@ -160,7 +150,7 @@ export default function App() {
         {notice?.runId === selectedRun.id && <DocNotice path={notice.path} onDismiss={() => setNotice(null)} />}
         <div className="office-layout">
           <section className="office-column" aria-label="사무실 현황">
-            <Office key={selectedRun.id} run={selectedRun} projectRuns={activeProject.runs} asks={floorAsks} now={now} onOpenAsk={setSelectedAskId} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} overviewOpen={overviewOpen} onOverviewOpenChange={setOverviewOpen} floors={visitorFloors} onVisitProject={(path) => {
+            <Office key={selectedRun.id} run={selectedRun} projectRuns={activeProject.runs} asks={floorAsks} now={now} onOpenAsk={setSelectedAskId} overviewOpen={overviewOpen} onOverviewOpenChange={setOverviewOpen} floors={visitorFloors} onVisitProject={(path) => {
               const latestProject = snapshotRef.current.projects.find((project) => project.path === path)
               const destination = latestProject && !latestProject.hidden && chooseProjectRun(latestProject)
               if (destination) window.location.hash = `#/run/${encodeURIComponent(destination.id)}`

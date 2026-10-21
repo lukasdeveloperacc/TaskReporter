@@ -12,8 +12,6 @@ export function RoomMiniMap({ geometry, point, activeRoomKey, targetRoomKey = nu
   const targetRoom = geometry.rooms.find(({ key }) => key === targetRoomKey)
 
   return <div className="room-minimap">
-    <p className="room-minimap__location">현재 위치 · {activeRoom?.name ?? '복도'}</p>
-    {targetRoom ? <p className="room-minimap__destination">목적지 · {targetRoom.name}</p> : null}
     <svg className="room-minimap__map" viewBox={`0 0 ${geometry.width} ${geometry.height}`} role="img" aria-label={`사무실 미니맵 · 현재 위치 ${activeRoom?.name ?? '복도'}${targetRoom ? ` · 목적지 ${targetRoom.name}` : ''}`}>
       <rect className="room-minimap__corridor" x="0" y="0" width={geometry.width} height={geometry.height} />
       {geometry.rooms.map((room) => {

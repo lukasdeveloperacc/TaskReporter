@@ -17,15 +17,12 @@ describe('RoomMiniMap', () => {
     expect(container.querySelector('.room-minimap__player')?.getAttribute('cx')).toBe('168')
     expect(container.querySelector('.room-minimap__player')?.getAttribute('cy')).toBe('1440')
     expect(container.querySelector('.room-minimap__player')?.getAttribute('r')).toBe('40')
-    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
   })
 
   it('marks current room and destination visually and names both accessibly', () => {
     const active = geometry.rooms.find(({ key }) => key === '백엔드팀')!
     const target = geometry.rooms.find(({ key }) => key === '감사팀')!
     const { container } = render(<RoomMiniMap geometry={geometry} point={point} activeRoomKey={active.key} targetRoomKey={target.key} />)
-    expect(screen.getByText('현재 위치 · 백엔드팀')).toBeTruthy()
-    expect(screen.getByText('목적지 · 감사팀')).toBeTruthy()
     expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 백엔드팀 · 목적지 감사팀' })).toBeTruthy()
     expect(container.querySelector(`[data-room-key="${active.key}"]`)?.getAttribute('data-active')).toBe('true')
     expect(container.querySelector(`[data-room-key="${target.key}"]`)?.getAttribute('data-target')).toBe('true')
@@ -36,7 +33,7 @@ describe('RoomMiniMap', () => {
     const room = geometry.rooms[0]
     const boundaryPoint = { x: (room.door.from.x + room.door.to.x) / 2, y: room.door.from.y }
     const { container } = render(<RoomMiniMap geometry={geometry} point={boundaryPoint} activeRoomKey={null} />)
-    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
     expect(container.querySelector('.room-minimap__player')?.getAttribute('cx')).toBe(String(boundaryPoint.x))
     expect(container.querySelector('.room-minimap__player')?.getAttribute('cy')).toBe(String(boundaryPoint.y))
     expect(container.querySelector('.room-minimap__room--active')).toBeNull()

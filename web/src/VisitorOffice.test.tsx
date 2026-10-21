@@ -30,7 +30,7 @@ function makeRun(tasks: Task[], patch: Partial<RunView> = {}): RunView {
 
 function OfficeHarness({ run, projectRuns = [run], asks = [] }: { run: RunView; projectRuns?: RunView[]; asks?: AskView[] }) {
   const [visitorEnabled, setVisitorEnabled] = useState(false)
-  return <Office run={run} projectRuns={projectRuns} asks={asks} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} onVisitorEnabledChange={setVisitorEnabled} />
+  return <><button type="button" onClick={() => setVisitorEnabled((enabled) => !enabled)}>{visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button><Office run={run} projectRuns={projectRuns} asks={asks} now={now} onOpenAsk={() => {}} visitorEnabled={visitorEnabled} /></>
 }
 
 const directionKeys: Record<Direction, { key: string; code: string }> = {
@@ -107,6 +107,12 @@ function activeBackendTask(patch: Partial<Task> = {}): Task {
   return { id: 'BACKEND-LIVE', owner: 'backend-1', lane: 'build', status: '진행중', title: 'API 응답 연결', model: 'claude-sonnet', effort: 'high', started: new Date(now - 30 * 60_000).toISOString(), ...patch }
 }
 
+function reducedMotionForTest() {
+  const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: true }) })
+  return () => original ? Object.defineProperty(window, 'matchMedia', original) : Reflect.deleteProperty(window, 'matchMedia')
+}
+
 describe('real Office visitor staff inspection', () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
@@ -120,18 +126,12 @@ describe('real Office visitor staff inspection', () => {
     fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
     const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
     expect(document.querySelector('.office-scene--corridor')).toBeTruthy()
-    expect(document.querySelector('.office-door-sign')?.textContent).toContain('Enter')
+    expect(screen.getByRole('button', { name: '백엔드팀 방으로 이동' })).toBeTruthy()
     expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
     expect(document.querySelector('.office-stamp')).toBeNull()
     expect(document.querySelector('.office-ask')).toBeNull()
-    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '백엔드팀' }))
-    expect(screen.getByText(/백엔드팀 입구 · ↑ 북쪽/)).toBeTruthy()
-    expect(screen.getByText('목적지 · 백엔드팀')).toBeTruthy()
-    expect(document.querySelector('.room-minimap__room--target')).toBeTruthy()
-    expect(characterFoot()).toEqual(VISITOR_SPAWN)
-    fireEvent.click(screen.getByRole('button', { name: '백엔드팀' }))
-    expect(screen.queryByText('목적지 · 백엔드팀')).toBeNull()
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
+    expect(document.querySelector('.room-minimap__room--target')).toBeNull()
 
     const target = employeePoint(run, 'backend-1')
     const route = findRoute(VISITOR_SPAWN, target)
@@ -143,7 +143,7 @@ describe('real Office visitor staff inspection', () => {
     expect(document.querySelector('[data-employee="frontend-1"]')).toBeNull()
     expect(document.querySelector('.office-stamp')).toBeNull()
     expect(document.querySelector('.office-ask')).toBeNull()
-    expect(screen.getByText('현재 위치 · 백엔드팀')).toBeTruthy()
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 백엔드팀' })).toBeTruthy()
 
     fireEvent.keyDown(map, { key: 'Enter', code: 'Enter' })
     const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
@@ -155,7 +155,7 @@ describe('real Office visitor staff inspection', () => {
     await waitFor(() => expect(characterFoot()).toEqual(VISITOR_SPAWN))
     expect(document.querySelector('.office-scene--corridor')).toBeTruthy()
     expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
-    expect(screen.getByText('현재 위치 · 복도')).toBeTruthy()
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
   })
 
   it('lets J open nearby staff history at an exit and prevents a repeated Enter on the door button', async () => {
@@ -255,7 +255,6 @@ describe('real Office visitor staff inspection', () => {
     const ended = makeRun([activeBackendTask({ title: '끝난 run의 이전 작업', lane: 'plan' })], { ended_at: stamp })
     rerender(<OfficeHarness run={ended} />)
     expect((await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })).textContent).toContain('직원을 찾을 수 없습니다')
-    expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
   })
 
   it('keeps completed assigned work and missing metadata visible for an inspectable idle employee', async () => {
@@ -406,7 +405,7 @@ describe('clicking staff to inspect work', () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
   })
-  it.each(['ordinary', 'overview', 'visitor overview', 'paused visitor overview'])('opens work from the character and bubble in %s', async (mode) => {
+  it.each(['visitor overview', 'paused visitor overview'])('opens work from the character and bubble in %s', async (mode) => {
     const run = makeRun([activeBackendTask()])
     render(<OfficeHarness run={run} />)
     const visiting = mode.includes('visitor')
@@ -430,18 +429,18 @@ describe('clicking staff to inspect work', () => {
       expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
       await waitFor(() => expect(document.activeElement).toBe(visiting ? map : employee))
     }
-    if (mode.startsWith('paused')) expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    if (mode.startsWith('paused')) expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
   })
 
   it('blocks staff clicks during an external dialog and after the run ends', () => {
     const run = makeRun([activeBackendTask()])
     const props = { run, asks: [], now, onOpenAsk: () => {} }
-    const { rerender } = render(<Office {...props} interactionBlocked />)
+    const { rerender } = render(<Office {...props} visitorEnabled={false} interactionBlocked />)
     const employee = document.querySelector<HTMLButtonElement>('[data-employee="backend-1"]')!
     expect(employee.disabled).toBe(true)
     fireEvent.click(employee)
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
-    rerender(<Office {...props} run={{ ...run, ended_at: stamp }} />)
+    rerender(<Office {...props} run={{ ...run, ended_at: stamp }} visitorEnabled={false} />)
     expect(employee.disabled).toBe(true)
     fireEvent.click(employee)
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
@@ -523,13 +522,13 @@ describe('walking to clicked staff', () => {
   it.each(['blocked', 'removed', 'ended', 'changed run'] as const)('cancels arrival when %s', (reason) => {
     const run = makeRun([activeBackendTask()])
     const props = { run, asks: [], now, onOpenAsk: () => {} }
-    const { rerender } = render(<Office {...props} />)
+    const { rerender } = render(<Office {...props} visitorEnabled={false} />)
     fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
     advance(200)
     const updated = reason === 'removed' ? makeRun([])
       : reason === 'ended' ? { ...run, ended_at: stamp }
       : reason === 'changed run' ? { ...run, id: 'another-run' } : run
-    rerender(<Office {...props} run={updated} interactionBlocked={reason === 'blocked'} />)
+    rerender(<Office {...props} run={updated} visitorEnabled={false} interactionBlocked={reason === 'blocked'} />)
     advance(1000)
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
     expect(screen.queryByText('backend-1에게 이동 중…')).toBeNull()
@@ -580,5 +579,152 @@ describe('walking to clicked staff', () => {
     fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
     expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('백엔드팀')
     expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' })).toBeTruthy()
+  })
+})
+
+describe('walking to selected rooms', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+  })
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+  const advance = (ms: number) => act(() => { vi.advanceTimersByTime(ms) })
+  const geometry = roomGeometry(roles.departments)
+
+  it.each([false, true])('uses every room shortcut, map door, and room header to walk inside the selected room (overview: %s)', (overview) => {
+    const restoreMotion = reducedMotionForTest()
+    try {
+      const run = makeRun([])
+      const shortcuts = render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+      if (overview) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+
+      for (const room of geometry.rooms) {
+        fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${room.name}$`) }))
+        expect(roomKeyAt(characterFoot(), geometry), `${room.name} shortcut`).toBe(room.key)
+        expect((document.querySelector('.office-scene') as HTMLElement).dataset.activeRoom).toBe(room.key)
+      }
+
+      shortcuts.unmount()
+      const doors = render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+      if (overview) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+      const map = screen.getByRole('region', { name: `${run.title} 사무실 바닥` })
+      expect(characterFoot()).toEqual(VISITOR_SPAWN)
+      for (const room of geometry.rooms) {
+        fireEvent.click(within(map).getByRole('button', { name: `${room.name} 방으로 이동` }))
+        expect(roomKeyAt(characterFoot(), geometry), `${room.name} map door`).toBe(room.key)
+        expect((document.querySelector('.office-scene') as HTMLElement).dataset.activeRoom).toBe(room.key)
+      }
+      doors.unmount()
+
+      const headers = render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+      if (overview) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+      const headerMap = screen.getByRole('region', { name: `${run.title} 사무실 바닥` })
+      for (const room of geometry.rooms) {
+        fireEvent.click(within(headerMap).getByRole('button', { name: `${room.name} 지도 구역` }))
+        expect(roomKeyAt(characterFoot(), geometry), `${room.name} room header`).toBe(room.key)
+        expect((document.querySelector('.office-scene') as HTMLElement).dataset.activeRoom).toBe(room.key)
+      }
+      headers.unmount()
+    } finally {
+      restoreMotion()
+    }
+  })
+
+  it('starts browsing on a direct Office render without a start or end toggle', () => {
+    render(<Office run={makeRun([])} asks={[]} now={now} onOpenAsk={() => {}} />)
+    expect(characterFoot()).toEqual(VISITOR_SPAWN)
+    expect(document.querySelector('.office-scene--corridor')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '직접 둘러보기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '둘러보기 끝내기' })).toBeNull()
+  })
+
+  it('retargets a room walk, then manual movement, pause, and Escape cancel it', () => {
+    const run = makeRun([])
+    render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+    const map = screen.getByRole('region', { name: `${run.title} 사무실 바닥` })
+
+    fireEvent.click(screen.getByRole('button', { name: /^백엔드팀$/ }))
+    expect(screen.getByText('백엔드팀 방으로 이동 중…')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^회의실$/ }))
+    expect(screen.getByText('회의실 방으로 이동 중…')).toBeTruthy()
+
+    advance(100)
+    fireEvent.keyDown(map, { key: 'ArrowRight', code: 'ArrowRight' })
+    expect(screen.queryByText(/방으로 이동 중/)).toBeNull()
+    const manuallyMoved = characterFoot()
+    advance(1000)
+    expect(characterFoot()).toEqual(manuallyMoved)
+
+    fireEvent.click(screen.getByRole('button', { name: '백엔드팀 방으로 이동' }))
+    expect(screen.getByText('백엔드팀 방으로 이동 중…')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    expect(screen.queryByText(/방으로 이동 중/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^회의실$/ }))
+    expect(screen.getByText('회의실 방으로 이동 중…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    advance(1000)
+    expect(roomKeyAt(characterFoot(), geometry)).toBe('회의실')
+    fireEvent.click(screen.getByRole('button', { name: '백엔드팀 방으로 이동' }))
+    expect(screen.getByText('백엔드팀 방으로 이동 중…')).toBeTruthy()
+    fireEvent.keyDown(map, { key: 'Escape' })
+    expect(screen.queryByText(/방으로 이동 중/)).toBeNull()
+    advance(1000)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+  })
+
+  it.each(['room shortcut', 'compact direction control'])('cancels a room walk when Escape is pressed on a sibling %s', (focusedControl) => {
+    const run = makeRun([])
+    render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+    fireEvent.click(screen.getByRole('button', { name: /^회의실$/ }))
+    advance(100)
+    const beforeEscape = characterFoot()
+    const control = focusedControl === 'room shortcut'
+      ? screen.getByRole('button', { name: /^백엔드팀$/ })
+      : screen.getByRole('button', { name: '위로 이동' })
+    control.focus()
+    expect(document.activeElement).toBe(control)
+
+    fireEvent.keyDown(control, { key: 'Escape' })
+    advance(1000)
+
+    expect(characterFoot()).toEqual(beforeEscape)
+    expect(screen.queryByText('회의실 방으로 이동 중…')).toBeNull()
+  })
+
+  it('leaves modified, composing, and editable Escape events to their owners', () => {
+    const run = makeRun([])
+    render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} visitorEnabled />)
+    fireEvent.click(screen.getByRole('button', { name: /^회의실$/ }))
+    const status = () => screen.getByText('회의실 방으로 이동 중…')
+    const control = screen.getByRole('button', { name: /^백엔드팀$/ })
+    control.focus()
+    expect(fireEvent.keyDown(control, { key: 'Escape', altKey: true })).toBe(true)
+    expect(status()).toBeTruthy()
+    expect(fireEvent.keyDown(control, { key: 'Escape', isComposing: true })).toBe(true)
+    expect(status()).toBeTruthy()
+
+    const input = document.createElement('input')
+    document.querySelector('.office-panel')?.append(input)
+    input.focus()
+    expect(fireEvent.keyDown(input, { key: 'Escape' })).toBe(true)
+    expect(status()).toBeTruthy()
+
+    fireEvent.keyDown(screen.getByRole('region', { name: `${run.title} 사무실 바닥` }), { key: 'Escape' })
+    expect(screen.queryByText('회의실 방으로 이동 중…')).toBeNull()
+  })
+
+  it('reports an unreachable room route and restores the department geometry', () => {
+    const backend = roles.departments.find(({ key }) => key === '백엔드팀')!
+    const previousX = backend.x
+    backend.x = -10_000
+    try {
+      render(<Office run={makeRun([])} asks={[]} now={now} onOpenAsk={() => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /^백엔드팀$/ }))
+      expect(screen.getByText('백엔드팀까지 가는 길을 찾을 수 없습니다.')).toBeTruthy()
+      expect(roomKeyAt(characterFoot(), geometry)).toBeNull()
+    } finally {
+      backend.x = previousX
+    }
   })
 })

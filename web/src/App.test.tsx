@@ -7,9 +7,9 @@ import { answerAsk, getDoc, getState, setProjectVisibility, subscribe } from './
 
 vi.mock('./api.ts', () => ({ getState: vi.fn(), getDoc: vi.fn(), subscribe: vi.fn(() => vi.fn()), answerAsk: vi.fn(), setProjectVisibility: vi.fn() }))
 let visitProject: ((path: string) => boolean | void) | undefined
-vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; visitorEnabled?: boolean; onVisitorEnabledChange?: (enabled: boolean) => void; overviewOpen?: boolean; onOverviewOpenChange?: (open: boolean) => void; floors?: { name: string; projectPath: string }[]; onVisitProject?: (path: string) => boolean | void }) => {
+vi.mock('./Office.tsx', () => ({ Office: (props: { run: { id: string }; overviewOpen?: boolean; onOverviewOpenChange?: (open: boolean) => void; floors?: { name: string; projectPath: string }[]; onVisitProject?: (path: string) => boolean | void }) => {
   visitProject = props.onVisitProject
-  return <div data-testid="office" data-visitor-enabled={String(props.visitorEnabled)} data-overview-open={String(props.overviewOpen)}><span data-testid="office-run">{props.run.id}</span>{props.onVisitorEnabledChange && <button type="button" onClick={() => props.onVisitorEnabledChange?.(!props.visitorEnabled)}>{props.visitorEnabled ? '둘러보기 끝내기' : '직접 둘러보기'}</button>}{props.onOverviewOpenChange && <button type="button" onClick={() => props.onOverviewOpenChange?.(!props.overviewOpen)}>{props.overviewOpen ? '전체 보기 닫기' : '전체 보기'}</button>}{props.floors?.map((floor) => <button type="button" key={floor.projectPath} onClick={() => props.onVisitProject?.(floor.projectPath)}>이동 {floor.name}</button>)}</div>
+  return <div data-testid="office" data-visitor-enabled="true" data-overview-open={String(props.overviewOpen)}><span data-testid="office-run">{props.run.id}</span>{props.onOverviewOpenChange && <button type="button" onClick={() => props.onOverviewOpenChange?.(!props.overviewOpen)}>{props.overviewOpen ? '전체 보기 닫기' : '전체 보기'}</button>}{props.floors?.map((floor) => <button type="button" key={floor.projectPath} onClick={() => props.onVisitProject?.(floor.projectPath)}>이동 {floor.name}</button>)}</div>
 } }))
 
 const ask: AskView = { id: 'ask-doc', run_id: 'newer', question: '문서를 다시 볼까요?', options: ['다시 계획', '계속'], recommended: '다시 계획', status: 'pending', answer: null }
@@ -174,14 +174,15 @@ describe('App route integration', () => {
     expect(screen.getByTestId('office').getAttribute('data-visitor-enabled')).toBe('true')
   })
 
-  it('preserves an explicit end through same-run snapshot refreshes and reenables on a new floor', async () => {
+  it('keeps browsing enabled across snapshots and floor changes without a start/end toggle', async () => {
     await renderApp(snapshot(), '#/run/newer')
-    fireEvent.click(await screen.findByRole('button', { name: '둘러보기 끝내기' }))
-    expect(screen.getByTestId('office').getAttribute('data-visitor-enabled')).toBe('false')
+    expect(screen.getByTestId('office').getAttribute('data-visitor-enabled')).toBe('true')
+    expect(screen.queryByRole('button', { name: '둘러보기 끝내기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '직접 둘러보기' })).toBeNull()
 
     vi.mocked(getState).mockResolvedValue(snapshot({ projects: [{ ...project, runs: [older, { ...newer, last_report_at: '2026-10-19T07:45:00.000Z' }, ended] }] }))
     act(() => stateChanged?.())
-    await waitFor(() => expect(screen.getByTestId('office').getAttribute('data-visitor-enabled')).toBe('false'))
+    await waitFor(() => expect(screen.getByTestId('office').getAttribute('data-visitor-enabled')).toBe('true'))
 
     window.location.hash = '#/'
     await waitFor(() => expect(screen.getByRole('button', { name: /alpha 층/ })).toBeTruthy())
