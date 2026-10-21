@@ -208,7 +208,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
     return {
-      run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at, checks: db.checks(run.id, true),
+      run_id: run.id, doc_changes: changes, ...(args.include_state === false ? {} : { state: run.state }), ended_at: run.ended_at, checks: db.checks(run.id, true),
       asks: db.asks(run.id).filter((ask) => ask.status === 'answered')
         .map((ask) => ({ ask_id: ask.id, status: 'answered' as const, answer: ask.answer! })),
     }
@@ -234,6 +234,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   }
 
   const usage = [
+    'report.include_state:false는 응답의 state만 생략합니다. 생략 또는 true면 기존 전체 응답입니다. 전체 state는 get_run.state로 조회하세요.',
     'report.asks는 답변된 결재를 {ask_id,status:answered,answer}로 매번 재전달합니다. ask_id로 중복 처리하세요. get_run.asks는 pending과 answered를 조회하며 수신 확인 상태를 변경하지 않습니다.',
     'ask 기본 대기는 100초입니다. pending.retry_after_sec 뒤 같은 ask_id로 다시 호출하세요. report가 호출되지 않는 동안에도 ask 재호출을 계속해야 답을 받습니다.',
     '첫 report 응답의 run_id를 받아 이후 report와 ask, get_run에서 재사용하세요.',
@@ -246,6 +247,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   ].join('\n')
   const schema = z.object({
     project_path: z.string().describe('프로젝트의 절대 경로'),
+    include_state: z.boolean().optional().describe('false면 응답 state만 생략; 미지정/true는 포함. 전체 상태는 get_run.state로 조회'),
     run_id: z.string().optional().describe('최초 report 응답에서 받은 run_id; 같은 실행에서는 재사용'),
     doc_path: z.string().optional().describe('프로젝트 기획서 Markdown 경로'),
     title: z.string().optional().describe('실행 제목'),
@@ -302,7 +304,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   const answeredAskSchema = z.object({ ask_id: z.string(), status: z.literal('answered'), answer: z.string() })
   const reportOutputSchema = z.object({
     run_id: z.string(), doc_changes: z.array(z.object({ path: z.string(), diff: z.string() })),
-    state: z.record(z.string(), z.unknown()), ended_at: z.string().nullable(), checks: z.array(z.unknown()),
+    state: z.record(z.string(), z.unknown()).optional(), ended_at: z.string().nullable(), checks: z.array(z.unknown()),
     asks: z.array(answeredAskSchema).describe('답변된 결재를 반복 전달; ask_id로 중복 처리, 조회는 수신 확인이 아님'),
   })
   const askOutputSchema = z.object({
@@ -315,6 +317,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     recommended: z.string().nullable(), status: z.enum(['pending', 'answered']), answer: z.string().nullable(),
   })
   const getRunOutputSchema = z.object({
+    state: z.record(z.string(), z.unknown()).describe('실행의 전체 진행 상태'),
     run_id: z.string(), project_path: z.string(), stage: z.string().optional(), ended_at: z.string().nullable(),
     tasks: z.array(z.unknown()), decisions: z.array(z.unknown()), reviews: z.array(z.unknown()),
     asks: z.array(runAskSchema).describe('pending과 answered 결재; answered는 ask_id로 중복 처리'), checks: z.array(z.unknown()),
@@ -325,7 +328,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     server.registerTool('report', { description: usage, inputSchema: schema, outputSchema: reportOutputSchema }, async (args) => jsonResult(report(args)))
     server.registerTool('ask', { description: 'Ask the user for a decision; default wait 100 seconds. On pending, wait retry_after_sec then call with the same ask_id. Answered replies remain available through ask, report.asks and get_run.asks; deduplicate by ask_id.', inputSchema: askSchema, outputSchema: askOutputSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
     server.registerTool('get_run', {
-      description: 'Read a run, pending and answered asks, and check history without changing state; deduplicate answered asks by ask_id',
+      description: 'Read a run with full state, pending and answered asks, and check history without changing state; deduplicate answered asks by ask_id',
       inputSchema: z.object({ run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id') }).strict(),
       outputSchema: getRunOutputSchema,
       annotations: { readOnlyHint: true },
@@ -333,7 +336,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       const run = db.getRun(run_id)
       if (!run) toolError(`unknown run_id: ${run_id}`)
       return jsonResult({
-        run_id: run.id, project_path: run.project_path, stage: run.state.stage, ended_at: run.ended_at,
+        run_id: run.id, project_path: run.project_path, state: run.state, stage: run.state.stage, ended_at: run.ended_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
         asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
         checks: db.checks(run.id),

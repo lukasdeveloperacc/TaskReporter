@@ -115,10 +115,11 @@ export type ReportArgs = {
   title?: string
   patch: Patch
   close_ask_ids?: string[]
+  include_state?: boolean
   check_replies?: { check_id: string; answer: string }[]
 }
 
-export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[] }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[] }
 
 export type AskArgs = {
   run_id: string

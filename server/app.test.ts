@@ -404,6 +404,35 @@ describe('office app', () => {
     await client.close()
   })
 
+  it('omits only report state on opt-in and returns the full state through get_run', async () => {
+    const { base, client } = await start()
+    const tools = (await client.listTools()).tools
+    const reportTool = tools.find((tool) => tool.name === 'report')!
+    expect(reportTool.inputSchema.properties!.include_state).toMatchObject({ type: 'boolean' })
+    expect(reportTool.outputSchema!.required).not.toContain('state')
+    expect(tools.find((tool) => tool.name === 'get_run')!.outputSchema!.required).toContain('state')
+    const first = parseTool(await report(client, base, { include_state: false, patch: { stage: '구현', summary: 'Full summary', todo: 'Next', blockers: 'None', tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    expect(first).not.toHaveProperty('state')
+    expect(Object.keys(first).sort()).toEqual(['run_id', 'ended_at', 'doc_changes', 'checks', 'asks'].sort())
+    const askId = db.createAsk(runId, 'Continue?', ['Yes'], undefined, 0)
+    db.answerAsk(askId, 'Yes')
+    const compactResponse = await report(client, base, { run_id: runId, include_state: false, patch: {} })
+    const compact = parseTool(compactResponse)!
+    expect(compact).not.toHaveProperty('state')
+    expect(compactResponse.structuredContent).not.toHaveProperty('state')
+    expect(compact.asks).toEqual([{ ask_id: askId, status: 'answered', answer: 'Yes' }])
+    expect(compact.checks).toEqual(first.checks)
+    const full = parseTool(await report(client, base, { run_id: runId, include_state: true, patch: {} }))!
+    const defaultResult = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    expect(defaultResult).toEqual(full)
+    const read = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect(read.state).toEqual(full.state)
+    expect(read.state).toMatchObject({ summary: 'Full summary', todo: 'Next', blockers: 'None' })
+    expect((await report(client, base, { run_id: runId, include_state: 'false', patch: {} })).isError).toBe(true)
+    await client.close()
+  })
+
   it('returns merged report state and reads one run with only its pending asks without writes', async () => {
     const { base, client } = await start()
     const first = parseTool(await report(client, base, { patch: {

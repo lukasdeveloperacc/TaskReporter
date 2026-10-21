@@ -4,6 +4,10 @@
 
 아래 [에이전트 체크인](#에이전트-체크인)은 로컬 구현 상태다. backend 대상 검사 4개 파일·65개 테스트와 typecheck를 통과했으며 전체 검사·독립 리뷰·실제 호스트 적응 검증은 별도다.
 
+## report 상태 조회
+
+report의 선택 입력 include_state는 boolean이다. false면 응답 state만 생략하고 run_id·ended_at·doc_changes·checks·asks는 유지한다. 미지정/true는 기존 응답이다. get_run은 기존 필드와 함께 전체 state를 반환한다. 스킬은 tools/list의 report.inputSchema.properties.include_state로 지원을 확인한다. DB·기본 응답 정책은 바꾸지 않는다.
+
 ## ask 계약
 
 `POST /mcp`의 `ask`는 `run_id`, `question`, `options`와 선택적인 `recommended`, `ask_id`를 받는다. 서버 선택지는 1–6개를 허용하고 basic-team은 구체적인 2–4개와 그중 추천값을 보낸다. 신규 질문은 DB에 pending으로 저장한다. 기본 100000ms(기존 295초에서 단축) 안에 브라우저 답이 오면 `{status:"answered",answer,ask_id}`, 시간 내 답이 없으면 `{status:"pending",ask_id,retry_after_sec:0,message:"같은 ask_id로 ask를 다시 호출하세요. 새 질문을 만들지 마세요."}`를 반환한다. pending은 질문 종료가 아니다. retry_after_sec 뒤 같은 id로 재호출하고 질문을 중복 생성하지 않는다. 저장된 답은 같은 id 재호출에서도 반환된다. 정확한 타입은 [contract.ts](../../shared/contract.ts)다.

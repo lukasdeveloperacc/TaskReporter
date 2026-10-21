@@ -33,7 +33,7 @@ docker compose logs -f office
 
 첫 `report`에서 받은 `run_id`를 이후 보고·질문·조회에 재사용합니다. `close_ask_ids`는 `patch` 밖 최상위 인자이며, stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작합니다. task는 id, decision은 title, review는 round+reviewer로 병합합니다. owner가 좌석을 정하며 `reviewer-*`는 감사팀, `plan-*`는 회의실에 배치합니다. model은 전체 모델 ID, effort는 host에서 확인한 값만 보내고 모르면 생략합니다.
 
-타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 병합된 `state`와 `ended_at`을 포함하고, 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending·answered 질문을 조회합니다. `report.asks`는 `{ask_id,status:"answered",answer}`를 반복 전달하고 `get_run.asks`는 기존 `id` 등을 유지하면서 `ask_id`를 추가합니다. `ask_id`로 중복 처리하세요. 조회·전송은 수신 확인이 아니며, 보고가 없는 결재 대기 중에는 같은 `ask_id` 재호출을 계속해야 합니다. MCP `tools/list`의 각 도구 `outputSchema`에서 `asks` 및 `retry_after_sec` 지원을 확인할 수 있습니다.
+타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 기본적으로 병합된 `state`와 `ended_at`을 포함합니다. 선택 입력 `include_state:false`는 응답의 `state`만 생략하고 나머지 필드를 유지합니다. 미지정 또는 true는 기존 응답을 유지하며 `get_run.state`로 전체 상태를 읽습니다. 스킬은 `report.inputSchema.properties.include_state`의 boolean 지원을 확인한 뒤 사용합니다. 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending·answered 질문을 조회합니다. `report.asks`는 `{ask_id,status:"answered",answer}`를 반복 전달하고 `get_run.asks`는 기존 `id` 등을 유지하면서 `ask_id`를 추가합니다. `ask_id`로 중복 처리하세요. 조회·전송은 수신 확인이 아니며, 보고가 없는 결재 대기 중에는 같은 `ask_id` 재호출을 계속해야 합니다. MCP `tools/list`의 각 도구 `outputSchema`에서 `asks` 및 `retry_after_sec` 지원을 확인할 수 있습니다.
 
 ### 에이전트 체크인
 
