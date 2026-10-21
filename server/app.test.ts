@@ -95,11 +95,11 @@ describe('office app', () => {
     await client.close()
   })
 
-  it('rejects an invalid first report atomically and preserves progress.py unknown-field errors', async () => {
+  it('rejects an invalid first report atomically with strict schema errors', async () => {
     const { base, client } = await start()
     const result = await report(client, base, { project_path: join(workspace, 'new-project'), patch: { extra: true } })
     expect(result.isError).toBe(true)
-    expect(result.content).toContainEqual(expect.objectContaining({ type: 'text', text: expect.stringContaining('unknown fields: extra') }))
+    expect(result.content).toContainEqual(expect.objectContaining({ type: 'text', text: expect.stringContaining('Unrecognized key: \"extra\"') }))
     const snapshot = await (await fetch(`${base}/api/state`)).json() as { projects: unknown[] }
     expect(snapshot.projects).toEqual([])
     const runId = String(parseTool(await report(client, base, { project_path: join(workspace, 'existing'), patch: { summary: 'saved' } }))!.run_id)
@@ -107,6 +107,93 @@ describe('office app', () => {
     const invalidExisting = await report(client, base, { project_path: join(workspace, 'existing'), run_id: runId, patch: { extra: true } })
     expect(invalidExisting.isError).toBe(true)
     expect(await (await fetch(`${base}/api/state`)).json()).toEqual(before)
+    await client.close()
+  })
+
+  it('publishes typed strict tool schemas and instructions', async () => {
+    const { client } = await start()
+    const { tools } = await client.listTools()
+    const reportTool = tools.find((tool) => tool.name === 'report')!
+    const patch = reportTool.inputSchema.properties!.patch as {
+      additionalProperties: boolean
+      properties: { tasks: { items: { additionalProperties: boolean; properties: Record<string, { enum?: string[]; description: string }> } } }
+    }
+    expect(reportTool.inputSchema.additionalProperties).toBe(false)
+    expect(patch.additionalProperties).toBe(false)
+    expect(patch.properties.tasks.items.additionalProperties).toBe(false)
+    expect(patch.properties.tasks.items.properties.lane!.enum).toEqual(['plan', 'build', 'review', 'fix', 'finish'])
+    expect(patch.properties.tasks.items.properties.status!.enum).toEqual(['대기중', '진행중', '완료', '중단'])
+    expect(patch.properties.tasks.items.properties.model!.description).toContain('전체 model ID')
+    expect(patch.properties.tasks.items.properties.effort!.description).toContain('모르면 생략')
+    expect(reportTool.description!.split('\n')).toHaveLength(5)
+    expect(client.getInstructions()).toBe(reportTool.description)
+    expect(tools.every((tool) => tool.inputSchema.additionalProperties === false)).toBe(true)
+    expect(tools.find((tool) => tool.name === 'get_run')!.annotations?.readOnlyHint).toBe(true)
+    await client.close()
+  })
+
+  it('rejects misspelled and mistyped tool arguments before storing anything', async () => {
+    const { base, client } = await start()
+    for (const args of [
+      { close_asks: [] },
+      { patch: { tasks: [{ id: 'x', assigned_to: 'reviewer-lead' }] } },
+      { patch: { tasks: [{ id: 'x', lane: 'backend' }] } },
+      { patch: { tasks: [{ id: 'x', status: 'running' }] } },
+      { patch: { decisions: [{ title: 'x', extra: true }] } },
+      { patch: { reviews: [{ round: 1, reviewer: 'Karpathy Agent', extra: true }] } },
+      { patch: { reviews: [{ round: 1, reviewer: 'reviewer-lead' }] } },
+      { patch: { summary: 42 } },
+    ]) {
+      const result = await report(client, base, args)
+      expect(result.isError, JSON.stringify(args)).toBe(true)
+      expect(result.content).toContainEqual(expect.objectContaining({ type: 'text', text: expect.stringContaining('Input validation error') }))
+    }
+    expect(db.snapshot(() => false).projects).toEqual([])
+    const runId = String(parseTool(await report(client, base, {}))!.run_id)
+    for (const args of [{ recommended: 'Maybe' }, { close_asks: [] }]) {
+      const result = await ask(client, { run_id: runId, question: '?', options: ['Yes'], ...args })
+      expect(result.isError).toBe(true)
+      if ('recommended' in args) expect(result.content).toContainEqual(expect.objectContaining({ text: expect.stringContaining('recommended must be one of the options') }))
+    }
+    expect(db.snapshot(() => false).asks).toEqual([])
+    expect((await client.callTool({ name: 'get_run', arguments: { run_id: runId, extra: true } })).isError).toBe(true)
+    await client.close()
+  })
+
+  it('returns merged report state and reads one run with only its pending asks without writes', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: {
+      tasks: [{ id: 'task', owner: 'reviewer-lead', model: 'gpt-6-astra', effort: 'high' }],
+      decisions: [{ title: 'Choice', body: 'First' }],
+      reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }],
+    } }))!
+    const runId = String(first.run_id)
+    expect(first.ended_at).toBeNull()
+    expect(first.state).toMatchObject({ tasks: [{ id: 'task', status: '대기중' }] })
+    const pending = parseTool(await ask(client, { run_id: runId, question: 'Continue?', options: ['Yes'], recommended: 'Yes' }))!
+    const closed = parseTool(await ask(client, { run_id: runId, question: 'Old?', options: ['Yes'] }))!
+    await report(client, base, { run_id: runId, close_ask_ids: [closed.ask_id], patch: { decisions: [{ title: 'Choice', body: 'Updated' }] } })
+    const otherRun = String(parseTool(await report(client, base, {}))!.run_id)
+    await ask(client, { run_id: otherRun, question: 'Other?', options: ['Yes'] })
+    const before = db.snapshot(() => false)
+    const result = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect(result).toMatchObject({
+      run_id: runId, project_path: join(workspace, 'project'), stage: '계획', ended_at: null,
+      tasks: [{ id: 'task', owner: 'reviewer-lead' }],
+      decisions: [{ title: 'Choice', body: 'Updated' }],
+      reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }],
+      asks: [{ id: pending.ask_id, status: 'pending', recommended: 'Yes' }],
+    })
+    expect(result.asks).toHaveLength(1)
+    expect(db.snapshot(() => false)).toEqual(before)
+    const ended = parseTool(await report(client, base, { run_id: runId, patch: { stage: '완료', tasks: [{ id: 'task', status: '완료' }] } }))!
+    expect(ended.ended_at).toBe('2027-01-15T08:00:00.000Z')
+    expect(ended.state).toMatchObject({ stage: '완료', tasks: [{ id: 'task', status: '완료' }] })
+    const finished = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect(finished).toMatchObject({ stage: '완료', ended_at: ended.ended_at, asks: [] })
+    const missing = await client.callTool({ name: 'get_run', arguments: { run_id: 'missing' } })
+    expect(missing.isError).toBe(true)
+    expect(missing.content).toContainEqual(expect.objectContaining({ text: 'unknown run_id: missing' }))
     await client.close()
   })
 

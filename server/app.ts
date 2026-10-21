@@ -6,7 +6,7 @@ import express from 'express'
 import { existsSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import * as z from 'zod/v4'
-import { ASK_WAIT_MS, CLOSED, SSE_EVENTS, type AskArgs, type AskResult, type ProgressData, type ReportArgs } from '../shared/contract.ts'
+import { ASK_WAIT_MS, CLOSED, LANES, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type ProgressData, type ReportArgs } from '../shared/contract.ts'
 import { apply, INIT } from './progress.ts'
 import { docDiff, inWorkspace, readDoc, resolveDoc, watchDoc } from './docs.ts'
 import { openStore, type AskRow, type RunRow } from './store.ts'
@@ -189,7 +189,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     else if (previousResolved !== newResolved || !watchers.has(run.id)) startWatcher(run)
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
-    return { run_id: run.id, doc_changes: changes }
+    return { run_id: run.id, doc_changes: changes, state: run.state, ended_at: run.ended_at }
   }
 
   const askTool = async (args: AskArgs, extra: { signal?: AbortSignal }, response: Response): Promise<AskResult> => {
@@ -211,23 +211,75 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     return waitForAsk(askId, extra.signal, response)
   }
 
-  const schema = {
-    project_path: z.string(),
-    run_id: z.string().optional(),
-    doc_path: z.string().optional(),
-    title: z.string().optional(),
-    patch: z.record(z.string(), z.unknown()),
-    close_ask_ids: z.array(z.string()).optional(),
-  }
-  const askSchema = {
-    run_id: z.string(), question: z.string(), options: z.array(z.string()).min(1).max(6),
-    recommended: z.string().optional(), ask_id: z.string().optional(),
-  }
+  const usage = [
+    '첫 report 응답의 run_id를 받아 이후 report와 ask, get_run에서 재사용하세요.',
+    'close_ask_ids는 patch 안이 아닌 report 최상위에 넣으세요.',
+    'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
+    'tasks는 id, decisions는 title, reviews는 round+reviewer로 기존 항목에 merge됩니다.',
+    'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
+  ].join('\n')
+  const schema = z.object({
+    project_path: z.string().describe('프로젝트의 절대 경로'),
+    run_id: z.string().optional().describe('최초 report 응답에서 받은 run_id; 같은 실행에서는 재사용'),
+    doc_path: z.string().optional().describe('프로젝트 기획서 Markdown 경로'),
+    title: z.string().optional().describe('실행 제목'),
+    patch: z.object({
+      title: z.string().optional().describe('실행 제목 변경'),
+      stage: z.string().optional().describe('계획·구현·리뷰·수정·마무리·완료·중단 접두어; 상세는 공백 뒤'),
+      summary: z.string().optional().describe('현재 진행 요약'),
+      blockers: z.string().optional().describe('진행을 막는 문제'),
+      todo: z.string().optional().describe('다음 할 일'),
+      tasks: z.array(z.object({
+        id: z.string().min(1).describe('작업 merge 키; 같은 작업은 같은 id 사용'),
+        title: z.string().optional().describe('작업 제목'),
+        owner: z.string().optional().describe('담당 에이전트 이름; 사무실 좌석을 결정'),
+        model: z.string().optional().describe('host가 확인한 전체 model ID; 별칭이나 추측값 대신 실제 ID 사용, 모르면 생략'),
+        effort: z.string().optional().describe('host가 확인한 reasoning effort 값(low|medium|high 등); 모르면 생략'),
+        lane: z.enum(LANES).optional().describe('작업 단계'),
+        status: z.enum(STATUSES).optional().describe('작업 상태'),
+        after: z.array(z.string()).optional().describe('선행 작업 id 목록'),
+        note: z.string().optional().describe('작업 상세 또는 결과'),
+      }).strict()).optional().describe('id로 merge할 작업 목록'),
+      decisions: z.array(z.object({
+        title: z.string().describe('결정 제목; merge 키'),
+        body: z.string().optional().describe('결정 내용과 근거'),
+      }).strict()).optional().describe('title로 merge할 결정 목록'),
+      reviews: z.array(z.object({
+        round: z.number().int().describe('리뷰 라운드; reviewer와 함께 merge 키'),
+        reviewer: z.enum(REVIEWERS).describe('정확한 리뷰어 이름; round와 함께 merge 키'),
+        verdict: z.string().optional().describe('리뷰 판정'),
+        note: z.string().optional().describe('리뷰 의견'),
+      }).strict()).optional().describe('round+reviewer로 merge할 리뷰 목록'),
+    }).strict().describe('기존 상태에 병합할 진행 변경; 알 수 없는 키는 거부'),
+    close_ask_ids: z.array(z.string()).optional().describe('종료할 질문 id 목록; patch 밖 최상위 필드'),
+  }).strict()
+  const askSchema = z.object({
+    run_id: z.string().describe('report 응답의 실행 id'),
+    question: z.string().describe('사용자에게 물을 질문'),
+    options: z.array(z.string()).min(1).max(6).describe('선택지 1~6개'),
+    recommended: z.string().optional().describe('options에 포함된 추천 선택지'),
+    ask_id: z.string().optional().describe('이미 생성한 질문의 응답을 다시 기다릴 때 사용'),
+  }).strict().refine((args) => args.recommended === undefined || args.options.includes(args.recommended), {
+    path: ['recommended'], message: 'recommended must be one of the options',
+  })
 
   app.post('/mcp', async (req, res) => {
-    const server = new McpServer({ name: 'office-team-reporter', version: '1.0.0' })
-    server.registerTool('report', { description: 'Report basic-team progress and document changes', inputSchema: schema }, async (args) => jsonResult(report(args as ReportArgs)))
-    server.registerTool('ask', { description: 'Ask the user for a decision and wait for an answer', inputSchema: askSchema }, async (args, extra) => jsonResult(await askTool(args as AskArgs, extra, res)))
+    const server = new McpServer({ name: 'office-team-reporter', version: '1.0.0' }, { instructions: usage })
+    server.registerTool('report', { description: usage, inputSchema: schema }, async (args) => jsonResult(report(args)))
+    server.registerTool('ask', { description: 'Ask the user for a decision and wait for an answer', inputSchema: askSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
+    server.registerTool('get_run', {
+      description: 'Read a run and its pending asks without changing state',
+      inputSchema: z.object({ run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id') }).strict(),
+      annotations: { readOnlyHint: true },
+    }, async ({ run_id }) => {
+      const run = db.getRun(run_id)
+      if (!run) toolError(`unknown run_id: ${run_id}`)
+      return jsonResult({
+        run_id: run.id, project_path: run.project_path, stage: run.state.stage, ended_at: run.ended_at,
+        tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
+        asks: db.snapshot(() => false).asks.filter((ask) => ask.run_id === run.id),
+      })
+    })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {
       void transport.close()

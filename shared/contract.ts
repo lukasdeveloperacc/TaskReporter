@@ -96,7 +96,7 @@ export type ReportArgs = {
   close_ask_ids?: string[]
 }
 
-export type ReportResult = { run_id: string; doc_changes: DocChange[] }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state: ProgressData; ended_at: string | null }
 
 export type AskArgs = {
   run_id: string

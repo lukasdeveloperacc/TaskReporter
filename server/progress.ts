@@ -38,6 +38,11 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
+function rejectUnknown(entry: Entry, allowed: string[], context: string) {
+  const unknown = Object.keys(entry).filter((field) => !allowed.includes(field)).sort()
+  if (unknown.length) fail(`${context}: unknown fields: ${unknown.join(', ')}; allowed: ${allowed.join(', ')}`)
+}
+
 export const INIT = (title: string): ProgressData => ({
   title,
   stage: '계획',
@@ -71,6 +76,7 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
   for (const rawTask of tasks) {
     if (!isRecord(rawTask) || typeof rawTask.id !== 'string' || !rawTask.id) fail('each task needs a string id')
     const task = rawTask
+    rejectUnknown(task, ['id', 'title', 'owner', 'model', 'effort', 'lane', 'status', 'after', 'note'], `task ${task.id}`)
     if ('lane' in task && !LANES.includes(task.lane as (typeof LANES)[number])) {
       fail(`task ${task.id}: lane must be one of ${LANES.join(', ')}`)
     }
@@ -85,12 +91,14 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
   const decisions = (patch.decisions ?? []) as unknown[]
   for (const decision of decisions) {
     if (!isRecord(decision) || typeof decision.title !== 'string') fail('each decision needs a string title')
+    rejectUnknown(decision, ['title', 'body'], `decision ${decision.title}`)
   }
   const reviews = (patch.reviews ?? []) as unknown[]
   for (const review of reviews) {
     if (!isRecord(review) || typeof review.reviewer !== 'string' || typeof review.round !== 'number' || !Number.isInteger(review.round)) {
       fail('each review needs an integer round and a string reviewer')
     }
+    rejectUnknown(review, ['round', 'reviewer', 'verdict', 'note'], `review ${review.round} ${review.reviewer}`)
     if (!REVIEWERS.includes(review.reviewer as (typeof REVIEWERS)[number])) {
       fail(`reviewer ${pythonRepr(review.reviewer)} must be exactly one of: ${REVIEWERS.join(', ')}`)
     }

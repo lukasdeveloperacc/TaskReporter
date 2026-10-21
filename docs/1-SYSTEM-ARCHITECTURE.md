@@ -8,7 +8,7 @@ Node 24 프로세스 하나가 Express 5, MCP SDK의 Streamable HTTP, SQLite와 
 | --- | --- |
 | [shared/contract.ts](../shared/contract.ts) | MCP 입력·응답, 상태 타입과 공통 시간·상태 상수 |
 | [server/main.ts](../server/main.ts) | 환경 검증, DB·HTTP 수명 주기와 정적 파일 제공 설정 |
-| [server/app.ts](../server/app.ts) | MCP report/ask, HTTP API, SSE, 질문 대기와 문서 watcher 조정 |
+| [server/app.ts](../server/app.ts) | MCP report/ask/get_run, HTTP API, SSE, 질문 대기와 문서 watcher 조정 |
 | [server/progress.ts](../server/progress.ts) | progress.py 호환 검증·병합·시간·종료 규칙 |
 | [server/store.ts](../server/store.ts) | SQLite 스키마·트랜잭션·스냅샷 |
 | [server/docs.ts](../server/docs.ts) | Markdown 읽기, 실제 경로 경계 검사, diff·변경 감시 |
@@ -78,10 +78,12 @@ OFFICE_URL=http://127.0.0.1:4781/mcp ASK_WAIT_MS=10000 node scripts/replay.ts re
 
 위 재생이 완료되면 그 run은 종료됩니다. 질문 테스트는 별도 활성 run을 report로 만들거나 해당 run을 `stage: "수정"`으로 재개한 뒤 실행합니다. Docker의 대기 시간을 바꾸는 검증은 `ASK_WAIT_MS=10000 docker compose up -d`로도 가능합니다. SDK 드라이버의 pending/retry 성공은 실제 Claude Code 클라이언트의 타임아웃 검증을 대신하지 않습니다.
 
-원본 progress.py와의 golden 비교는 설치된 basic-team 경로를 지정해 실행합니다.
+원본 progress.py와의 golden 비교는 저장소의 고정 fixture를 설치된 원본으로 재생하여 기대 JSON과 비교합니다. 인자가 없으면 BASIC_TEAM_DIR 또는 기본 설치 경로를 탐색하며, basic-team 경로를 명시할 수도 있습니다.
 
 ```sh
-npm run -s golden -- /absolute/path/to/basic-team
+npm run golden
+# 설치 경로를 명시할 때
+npm run golden -- /absolute/path/to/basic-team
 ```
 
 

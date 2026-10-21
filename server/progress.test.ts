@@ -30,6 +30,10 @@ describe('progress apply', () => {
 
   it.each([
     [{ extra: true }, 'unknown fields: extra; allowed: title, stage, summary, todo, blockers, tasks, decisions, reviews'],
+    [{ tasks: [{ id: 'T', close_asks: [] }] }, 'task T: unknown fields: close_asks; allowed: id, title, owner, model, effort, lane, status, after, note'],
+    [{ tasks: [{ id: 'T', started: 'forged' }] }, 'task T: unknown fields: started'],
+    [{ decisions: [{ title: 'D', note: 'wrong field' }] }, 'decision D: unknown fields: note; allowed: title, body'],
+    [{ reviews: [{ round: 1, reviewer: 'Karpathy Agent', status: 'PASS' }] }, 'review 1 Karpathy Agent: unknown fields: status; allowed: round, reviewer, verdict, note'],
     [{ tasks: [{ id: 'T', lane: 'unknown' }] }, 'task T: lane must be one of plan, build, review, fix, finish'],
     [{ reviews: [{ round: 1, reviewer: 'Mystery' }] }, "reviewer 'Mystery' must be exactly one of: Karpathy Agent, Ponytail Agent, Impeccable Agent, E2E Agent"],
     [{ tasks: [{ id: 'T', after: ['MISSING'] }] }, 'after refers to unknown task ids: MISSING'],

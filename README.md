@@ -1,6 +1,6 @@
 # Office Team Reporter
 
-basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다. 터미널이 팀을 지휘하고 앱은 프로젝트별 층, 직원의 작업·검수, 결재 요청, 기획 변경과 업무 일지를 보여줍니다. 웹 UI와 Streamable HTTP MCP(`report`, `ask`)가 Node 프로세스 하나에서 실행됩니다.
+basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다. 터미널이 팀을 지휘하고 앱은 프로젝트별 층, 직원의 작업·검수, 결재 요청, 기획 변경과 업무 일지를 보여줍니다. 웹 UI와 Streamable HTTP MCP(`report`, `ask`, `get_run`)가 Node 프로세스 하나에서 실행됩니다.
 
 ## 실행과 연결
 
@@ -30,6 +30,10 @@ docker compose logs -f office
 ## 진행 보고와 결재
 
 `report`가 진행을 보내고 `ask`가 대표실에 결재 선택지를 만듭니다. 기본 대기는 295,000ms이며 답이 없으면 `pending`과 `ask_id`를 반환합니다. 스킬은 같은 id로 재호출합니다. 터미널에서 답하려면 Esc로 도구 대기를 끊고 채팅에 답하세요. 리더가 다음 report의 `close_ask_ids`로 앱의 서류를 닫습니다. 기획서 변경 diff가 보고되면 basic-team이 재계획 여부를 묻습니다.
+
+첫 `report`에서 받은 `run_id`를 이후 보고·질문·조회에 재사용합니다. `close_ask_ids`는 `patch` 밖 최상위 인자이며, stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작합니다. task는 id, decision은 title, review는 round+reviewer로 병합합니다. owner가 좌석을 정하며 `reviewer-*`는 감사팀, `plan-*`는 회의실에 배치합니다. model은 전체 모델 ID, effort는 host에서 확인한 값만 보내고 모르면 생략합니다.
+
+타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 병합된 `state`와 `ended_at`을 포함하고, 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending 질문을 조회합니다.
 
 2026-10-19에 Claude Code 2.1.303, sonnet, `MCP_TOOL_TIMEOUT=325000` 환경에서 실제 ask가 약 295초 후 `pending`을 반환하고 같은 `ask_id` 재호출 뒤 브라우저 답변을 전달하는 흐름을 확인했습니다. 이 결과는 해당 실행 환경의 검증이며 모든 클라이언트·전송 idle 제한을 보장하지 않습니다. 전체 실행과 검증 상태는 [변경 기록](docs/changes/001-office-team-reporter.md)에 기록합니다.
 

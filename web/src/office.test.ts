@@ -36,6 +36,8 @@ describe('office roles and employees', () => {
   it('maps known and unknown owners, ranks, and stable character frames', () => {
     expect(departmentOf('backend-1')).toBe('백엔드팀')
     expect(departmentOf('Karpathy Agent')).toBe('감사팀')
+    expect(departmentOf('reviewer-lead')).toBe('감사팀')
+    expect(departmentOf('plan-architect')).toBe('회의실')
     expect(departmentOf('designer-1')).toBe('임시 자리')
     expect(departmentOf('Planner', 'plan')).toBe('회의실')
     expect(rankOf('claude-haiku-4')).toBe('신입사원')
@@ -44,6 +46,11 @@ describe('office roles and employees', () => {
     expect(rankOf('gpt-6-luna')).toBe('신입사원')
     expect(rankOf('gpt-6.1-sol')).toBe('대리')
     expect(characterFrame('backend-1')).toEqual(characterFrame('backend-1'))
+  })
+
+  it('creates reviewer characters from reviews without tasks', () => {
+    const run = makeRun({ state: { reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }] } })
+    expect(buildOffice(run, now).employees.find(({ name }) => name === 'Karpathy Agent')).toMatchObject({ department: '감사팀', state: 'idle' })
   })
 
   it('shows temporary owner labels, task elapsed time, away threshold, and ended staff', () => {

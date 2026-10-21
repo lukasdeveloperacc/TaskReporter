@@ -4,12 +4,25 @@
 
 ## 계약과 업무 규칙
 
-`POST /mcp`의 `report`는 절대 `project_path`, `patch`와 선택적인 `run_id`, `doc_path`, `title`, `close_ask_ids`를 받는다. 새 실행은 run_id를 발급하고 기존 실행은 같은 id로 이어간다. 다른 프로젝트에 속한 run_id나 알 수 없는 id는 오류이며 자동으로 새 run을 만들지 않는다. 응답은 `{run_id, doc_changes}`다. 정확한 타입은 [contract.ts](../../shared/contract.ts), 검증·병합은 [progress.ts](../../server/progress.ts)를 따른다.
+`POST /mcp`의 `report`는 절대 `project_path`, `patch`와 선택적인 `run_id`, `doc_path`, `title`, `close_ask_ids`를 받는다. 새 실행은 run_id를 발급하고 기존 실행은 같은 id로 이어간다. 다른 프로젝트에 속한 run_id나 알 수 없는 id는 오류이며 자동으로 새 run을 만들지 않는다. 응답은 `{run_id, doc_changes, state, ended_at}`이며 state는 병합된 진행 상태다. 정확한 타입은 [contract.ts](../../shared/contract.ts), 검증·병합은 [progress.ts](../../server/progress.ts)를 따른다.
 
 - 텍스트 patch는 title·stage·summary·todo·blockers만 받는다. task는 id, decision은 앞뒤 공백을 제거한 title, review는 round+reviewer로 병합한다. 보내지 않은 기존 항목을 보존한다.
 - stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작한다. task lane은 plan/build/review/fix/finish, status는 대기중·진행중·완료·중단이다. after는 존재하는 task id만 참조한다.
 - 진행중 진입과 완료·중단 전환 때 task 시간을 기록한다. 열린 task가 있으면 완료 report를 거부한다. finish 종료의 자동 완료 규칙은 원본 progress.py와 맞춘다.
 - review 이름은 Karpathy Agent, Ponytail Agent, Impeccable Agent, E2E Agent다. 라운드와 보고된 판정·note를 표시한다.
+
+### MCP 입력 검증·조회 개선
+
+상태: 구현·자동 검증 완료. 결과는 [변경 008](../changes/008-mcp-validation.md)에 기록한다.
+
+- 도구 인자 최상위와 patch·중첩 항목을 strict 스키마로 검증하여 `close_asks` 같은 오타를 버리지 않고 오류로 반환한다. `close_ask_ids`는 patch 안이 아닌 최상위 인자다. 기존 `patch.title`은 유지한다.
+- task 허용 필드는 `id`, `title`, `owner`, `model`, `effort`, `lane`, `status`, `after`, `note`다. decision은 `title`, `body`, review는 `round`, `reviewer`, `verdict`, `note`만 받는다. patch에는 이 배열들과 `title`, `stage`, `summary`, `blockers`, `todo`를 허용한다. lane·status·reviewer의 값은 공용 계약의 enum을 따른다. 각 필드 설명을 MCP 스키마에 노출한다.
+- model은 전체 모델 ID를 기록한다. effort는 host가 확인한 값(예: low·medium·high)을 보내며 모르면 생략한다. owner가 사무실 좌석을 결정하고 `reviewer-*`는 감사팀, `plan-*`는 회의실로 배치한다. tasks 없이 reviews만 보고해도 리뷰어 캐릭터를 표시한다.
+- 첫 report로 받은 run_id를 이후 호출에 재사용한다. stage 접두어와 기존 병합 키(task id·decision title·review round+reviewer)는 유지한다.
+- 읽기 전용 `get_run({run_id})`은 project_path·stage·ended_at·tasks·decisions·reviews와 pending 질문 목록인 asks를 반환한다. MCP `readOnlyHint`를 선언하며 조회로 실행을 생성하거나 변경하지 않는다.
+- TypeScript 병합 경로도 task·decision·review의 허용 키 외 필드를 거부한다. HTML 원본 progress.py 자체는 수정하지 않으며 기존 병합·시간·종료 규칙과의 호환을 유지한다.
+
+완료 기준은 실제 tools/list의 필드 설명·strict 스키마·읽기 전용 선언, 오타 거부와 저장 전 검증, report 응답 상태, get_run 조회와 pending 질문, owner 좌석·reviews만 있는 캐릭터를 자동 검증하는 것이다. 전체 test·typecheck·build·원본 golden을 통과해야 한다. 실제 Claude Code 클라이언트 검증과 SDK 도구 호출 검증은 구분한다.
 
 ## 화면·상태
 

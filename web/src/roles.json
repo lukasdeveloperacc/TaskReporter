@@ -16,6 +16,8 @@
     { "match": "backend-*", "department": "백엔드팀" },
     { "match": "frontend-*", "department": "프론트엔드팀" },
     { "match": "docs-*", "department": "문서팀" },
+    { "match": "reviewer-*", "department": "감사팀" },
+    { "match": "plan-*", "department": "회의실" },
     { "match": "Planner", "department": "회의실" },
     { "match": "Architect", "department": "회의실" },
     { "match": "Critic", "department": "회의실" },

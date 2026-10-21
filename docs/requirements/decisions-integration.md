@@ -6,9 +6,11 @@
 
 `POST /mcp`의 `ask`는 `run_id`, `question`, `options`와 선택적인 `recommended`, `ask_id`를 받는다. 서버 선택지는 1–6개를 허용하고 basic-team은 구체적인 2–4개와 그중 추천값을 보낸다. 신규 질문은 DB에 pending으로 저장한다. 기본 295000ms 안에 브라우저 답이 오면 `{status:"answered",answer,ask_id}`, 시간 내 답이 없으면 `{status:"pending",ask_id}`를 반환한다. pending은 질문 종료가 아니다. 같은 id로 재호출하고 질문을 중복 생성하지 않는다. 저장된 답은 같은 id 재호출에서도 반환된다. 정확한 타입은 [contract.ts](../../shared/contract.ts)다.
 
+ask 최상위의 알 수 없는 필드를 거부하고, recommended가 있으면 options에 포함되는지 검증한다. 포함되지 않은 추천값은 질문을 저장하기 전에 오류로 반환한다. 읽기 전용 `get_run({run_id})`으로 해당 실행의 pending 질문을 조회할 수 있다([변경 008](../changes/008-mcp-validation.md)). 조회 자체는 질문을 답변·종료하거나 대기 호출을 만들지 않는다.
+
 대표실 선택지는 `POST /api/asks/:id/answer`에 `{answer}`로 보낸다. 선택지 외 값은 400, 없는 질문은 404, 이미 처리된 질문은 409다. 사용자가 창을 닫거나 Esc를 눌러도 질문은 남는다. 전송 중 중복 선택을 막고 실패 시 오류를 표시한다. 추천은 사용자의 답을 대신하지 않는다.
 
-터미널에서 답하려면 도구 대기를 Esc로 끊고 채팅으로 답한다. 리더는 다음 report의 `close_ask_ids`로 해당 질문을 닫는다. 완료·중단 report는 남은 pending 질문을 닫는다. 종료 run의 새 질문과 닫힌 질문 재호출은 오류다. 취소된 HTTP 호출의 waiter는 해제하지만 DB 질문은 유지한다.
+터미널에서 답하려면 도구 대기를 Esc로 끊고 채팅으로 답한다. 리더는 다음 report의 최상위 `close_ask_ids`로 해당 질문을 닫는다. 완료·중단 report는 남은 pending 질문을 닫는다. 종료 run의 새 질문과 닫힌 질문 재호출은 오류다. 취소된 HTTP 호출의 waiter는 해제하지만 DB 질문은 유지한다.
 
 ## 스킬 연결과 폴백
 
