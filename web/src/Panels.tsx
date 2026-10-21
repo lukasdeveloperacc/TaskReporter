@@ -112,7 +112,7 @@ export function Journal({ runs, onOpenSnapshot }: { runs: RunView[]; onOpenSnaps
         <div className="snapshot" role="dialog" aria-modal="false" aria-labelledby="snapshot-title">
           <div className="snapshot__heading"><h3 id="snapshot-title">{snapshot.title || '마지막 상태'}</h3><button type="button" aria-label="스냅샷 닫기" onClick={() => setSnapshot(null)}>닫기</button></div>
           <p>{snapshot.state.summary || '요약이 기록되지 않았습니다.'}</p>
-          <SnapshotList title="작업" items={(snapshot.state.tasks ?? []).map((task) => `${task.title || task.id} · ${task.status || '상태 미정'}`)} empty="기록된 작업이 없습니다." />
+          <SnapshotList title="작업" items={(snapshot.state.tasks ?? []).map((task) => `${task.title || task.id} · ${task.status || '상태 미정'}${task.todos?.length ? ` · TODO ${task.todos.filter((todo) => todo.done).length}/${task.todos.length}` : ''}`)} empty="기록된 작업이 없습니다." />
           <SnapshotList title="리뷰" items={(snapshot.state.reviews ?? []).map((review) => `R${review.round} ${review.reviewer} · ${review.verdict || '결과 미정'}${review.note ? ` — ${review.note}` : ''}`)} empty="기록된 리뷰가 없습니다." />
           <SnapshotList title="결정" items={(snapshot.state.decisions ?? []).map((decision) => `${decision.title}${decision.body ? ` — ${decision.body}` : ''}`)} empty="기록된 결정이 없습니다." />
         </div>

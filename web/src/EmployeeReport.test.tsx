@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { RunView, Task } from '../../shared/contract.ts'
 import { EmployeeReport, type ReportTab } from './EmployeeReport.tsx'
@@ -10,15 +10,17 @@ const makeRun = (id: string, title: string, tasks: Task[], patch: Partial<RunVie
 })
 
 describe('EmployeeReport', () => {
-  it('shows current progressing work with its reported fields and honest missing values', () => {
+  it('shows assigned work from planning through completion with reported fields and honest missing values', () => {
     const run = makeRun('current', '현재 실행', [
       { id: 'one', owner: 'staff-a', title: '진행 작업', status: '진행중', model: 'codex', effort: 'high', started: '2026-10-20T10:00:00Z' },
-      { id: 'two', owner: 'staff-a', status: '완료' },
+      { id: 'two', owner: 'staff-a', title: '완료 작업', status: '완료' },
+      { id: 'planned', owner: 'staff-a', title: '계획 작업', status: '대기중' },
       { id: 'other', owner: 'staff-b', title: '다른 직원' },
     ])
     render(<EmployeeReport owner="staff-a" runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={Date.parse('2026-10-20T11:00:00Z')} />)
     expect(screen.getByText(/작업 · 진행 작업/)).toBeTruthy()
-    expect(screen.queryByText('two')).toBeNull()
+    expect(screen.getByText('작업 · 완료 작업')).toBeTruthy()
+    expect(screen.getByText('작업 · 계획 작업')).toBeTruthy()
     expect(screen.queryByText('다른 직원')).toBeNull()
     expect(screen.getByText('작업 ID · one')).toBeTruthy()
     expect(screen.getByText('상태 · 진행중')).toBeTruthy()
@@ -26,7 +28,40 @@ describe('EmployeeReport', () => {
     expect(screen.getByText('노력 · high')).toBeTruthy()
     expect(screen.getByText('경과 시간 · 60분')).toBeTruthy()
     expect(screen.getAllByText(/미보고/).length).toBeGreaterThan(0)
-    expect(screen.getByText('최근 보고된 진행 업무입니다.')).toBeTruthy()
+    expect(screen.getByText('이번 실행에서 맡은 업무와 체크리스트입니다.')).toBeTruthy()
+  })
+
+  it.each(['current', 'history'] as const)('groups Phase TODOs, shows completion and folded details, and splits notes in %s', (tab) => {
+    const run = makeRun('current', '현재 실행', [{
+      id: 'FE', owner: 'staff-a', title: '직원 체크리스트', status: '대기중',
+      note: '계획 합의\n구현 시작 · 검증 예정',
+      todos: [
+        { id: 'FE-1', text: '요구사항 확인', phase: '계획', done: true },
+        { id: 'FE-2', text: '체크리스트 구현', phase: '구현', detail: 'Phase별로 묶기\n작은 화면 확인' },
+        { id: 'FE-3', text: '접근성 검토', phase: '계획' },
+        { id: 'FE-4' },
+      ],
+    }])
+    const onTabChange = vi.fn()
+    const { container } = render(<EmployeeReport owner="staff-a" runs={[run]} currentRunId="current" tab={tab} onTabChange={onTabChange} now={0} />)
+    expect(screen.getByText('TODO 진행 · 1/4')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: '직원 체크리스트 TODO 진행' }).getAttribute('value')).toBe('1')
+    const plan = screen.getByRole('region', { name: '계획 TODO' })
+    expect(within(plan).getByText('요구사항 확인')).toBeTruthy()
+    expect(within(plan).getByText('접근성 검토')).toBeTruthy()
+    expect(within(plan).getByRole('img', { name: '완료' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '구현 TODO' })).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '할 일 TODO' })).getByText('FE-4')).toBeTruthy()
+    expect(container.querySelector('.employee-report__todo--done')?.textContent).toContain('요구사항 확인')
+    const details = container.querySelector('details')!
+    expect(details.open).toBe(false)
+    fireEvent.click(screen.getByText('상세 보기'))
+    expect(details.open).toBe(true)
+    expect(screen.getByText(/Phase별로 묶기/).textContent).toBe('Phase별로 묶기\n작은 화면 확인')
+    for (const line of ['계획 합의', '구현 시작', '검증 예정']) expect(screen.getByText(line).tagName).toBe('P')
+    fireEvent.keyDown(screen.getByText('상세 보기'), { key: 'ArrowRight' })
+    fireEvent.keyDown(screen.getByText('상세 보기'), { key: 'j', code: 'KeyJ' })
+    expect(onTabChange).not.toHaveBeenCalled()
   })
 
   it('sorts real prior runs by valid latest timestamp, includes ended runs and refreshes from props', () => {

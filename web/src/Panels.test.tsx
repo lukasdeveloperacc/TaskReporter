@@ -53,6 +53,13 @@ describe('Panels', () => {
     expect(screen.getByText(/React DOM — 접근성 있는 씬/)).toBeTruthy()
   })
 
+  it('shows TODO counts in the final work snapshot', () => {
+    const endedRun = run({ state: { tasks: [{ id: 'FE', title: '화면', status: '완료', todos: [{ id: 'a', done: true }, { id: 'b' }] }] } })
+    render(<Journal runs={[endedRun]} onOpenSnapshot={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /사무실 리포터/ }))
+    expect(screen.getByText('화면 · 완료 · TODO 1/2')).toBeTruthy()
+  })
+
   it('explains when the plan document is outside the readable workspace', () => {
     render(<DocumentPanel run={run()} />)
     expect(screen.getByText('기획서 열람·변경 감지 불가')).toBeTruthy()

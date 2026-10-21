@@ -258,7 +258,7 @@ describe('real Office visitor staff inspection', () => {
     expect(screen.getByRole('button', { name: '둘러보기 끝내기' })).toBeTruthy()
   })
 
-  it('shows no-current-task and missing metadata for an inspectable idle employee', async () => {
+  it('keeps completed assigned work and missing metadata visible for an inspectable idle employee', async () => {
     const run = makeRun([{ id: 'BACKEND-DONE', owner: 'backend-2', lane: 'build', status: '완료', title: '완료된 작업' }])
     const previous = makeRun([{ id: 'BACKEND-OLD', owner: 'backend-2', lane: 'build', status: '완료', title: '이전 실행 업무' }], { id: 'visitor-staff-history', title: '이전 실행 보고', last_report_at: staleReport, ended_at: staleReport })
     render(<OfficeHarness run={run} projectRuns={[run, previous]} />)
@@ -284,7 +284,8 @@ describe('real Office visitor staff inspection', () => {
     const currentInspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
     expect(currentInspector.textContent).toContain('backend-2 업무')
     expect(currentInspector.textContent).toContain('상태 · 근무 중')
-    expect(currentInspector.textContent).toContain('현재 진행 중인 작업이 없습니다.')
+    expect(currentInspector.textContent).toContain('작업 · 완료된 작업')
+    expect(currentInspector.textContent).toContain('상태 · 완료')
     expect(currentInspector.textContent).toContain('모델 · 미보고')
     expect(currentInspector.textContent).toContain('노력 · 미보고')
     fireEvent.keyDown(screen.getByRole('tab', { name: '현재 업무' }), { key: 'Escape' })

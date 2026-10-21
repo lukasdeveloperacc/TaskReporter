@@ -14,6 +14,14 @@ export type Lane = (typeof LANES)[number]
 export type TaskStatus = (typeof STATUSES)[number]
 export type AskStatus = 'pending' | 'answered' | 'closed'
 
+export type Todo = {
+  id: string
+  text?: string
+  phase?: string
+  done?: boolean
+  detail?: string
+}
+
 export type Task = {
   id: string
   title?: string
@@ -24,6 +32,7 @@ export type Task = {
   model?: string
   effort?: string
   note?: string
+  todos?: Todo[]
   started?: string
   finished?: string
 }

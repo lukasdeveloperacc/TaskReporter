@@ -125,6 +125,15 @@ describe('office app', () => {
     expect(patch.properties.tasks.items.properties.status!.enum).toEqual(['대기중', '진행중', '완료', '중단'])
     expect(patch.properties.tasks.items.properties.model!.description).toContain('전체 model ID')
     expect(patch.properties.tasks.items.properties.effort!.description).toContain('모르면 생략')
+    const todos = patch.properties.tasks.items.properties.todos as unknown as {
+      items: { additionalProperties: boolean; properties: Record<string, { type: string; minLength?: number; description: string }> }
+    }
+    expect(todos.items.additionalProperties).toBe(false)
+    expect(todos.items.properties.id).toMatchObject({ type: 'string', minLength: 1 })
+    expect(todos.items.properties.done!.type).toBe('boolean')
+    expect(Object.keys(todos.items.properties)).toEqual(['id', 'text', 'phase', 'done', 'detail'])
+    expect(Object.values(todos.items.properties).every((field) => field.description.length > 0)).toBe(true)
+    expect(reportTool.description).toContain('todos:[{id:"FE-2",done:true}]')
     expect(reportTool.description!.split('\n')).toHaveLength(5)
     expect(client.getInstructions()).toBe(reportTool.description)
     expect(tools.every((tool) => tool.inputSchema.additionalProperties === false)).toBe(true)
@@ -143,6 +152,10 @@ describe('office app', () => {
       { patch: { reviews: [{ round: 1, reviewer: 'Karpathy Agent', extra: true }] } },
       { patch: { reviews: [{ round: 1, reviewer: 'reviewer-lead' }] } },
       { patch: { summary: 42 } },
+      { patch: { tasks: [{ id: 'FE', todos: null }] } },
+      { patch: { tasks: [{ id: 'FE', todos: [{ id: '' }] }] } },
+      { patch: { tasks: [{ id: 'FE', todos: [{ id: 'FE-1', checked: true }] }] } },
+      { patch: { tasks: [{ id: 'FE', todos: [{ id: 'FE-1', done: 'true' }] }] } },
     ]) {
       const result = await report(client, base, args)
       expect(result.isError, JSON.stringify(args)).toBe(true)
@@ -163,23 +176,25 @@ describe('office app', () => {
   it('returns merged report state and reads one run with only its pending asks without writes', async () => {
     const { base, client } = await start()
     const first = parseTool(await report(client, base, { patch: {
-      tasks: [{ id: 'task', owner: 'reviewer-lead', model: 'gpt-6-astra', effort: 'high' }],
+      tasks: [{ id: 'task', owner: 'reviewer-lead', model: 'gpt-6-astra', effort: 'high', todos: [{ id: 'T-1', phase: '계획', detail: '초안' }] }],
       decisions: [{ title: 'Choice', body: 'First' }],
       reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }],
     } }))!
     const runId = String(first.run_id)
     expect(first.ended_at).toBeNull()
-    expect(first.state).toMatchObject({ tasks: [{ id: 'task', status: '대기중' }] })
+    expect(first.state).toMatchObject({ tasks: [{ id: 'task', status: '대기중', todos: [{ id: 'T-1', text: 'T-1', phase: '계획', detail: '초안' }] }] })
     const pending = parseTool(await ask(client, { run_id: runId, question: 'Continue?', options: ['Yes'], recommended: 'Yes' }))!
     const closed = parseTool(await ask(client, { run_id: runId, question: 'Old?', options: ['Yes'] }))!
-    await report(client, base, { run_id: runId, close_ask_ids: [closed.ask_id], patch: { decisions: [{ title: 'Choice', body: 'Updated' }] } })
+    await report(client, base, { run_id: runId, close_ask_ids: [closed.ask_id], patch: {
+      decisions: [{ title: 'Choice', body: 'Updated' }], tasks: [{ id: 'task', todos: [{ id: 'T-1', done: true }] }],
+    } })
     const otherRun = String(parseTool(await report(client, base, {}))!.run_id)
     await ask(client, { run_id: otherRun, question: 'Other?', options: ['Yes'] })
     const before = db.snapshot(() => false)
     const result = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
     expect(result).toMatchObject({
       run_id: runId, project_path: join(workspace, 'project'), stage: '계획', ended_at: null,
-      tasks: [{ id: 'task', owner: 'reviewer-lead' }],
+      tasks: [{ id: 'task', owner: 'reviewer-lead', todos: [{ id: 'T-1', text: 'T-1', phase: '계획', detail: '초안', done: true }] }],
       decisions: [{ title: 'Choice', body: 'Updated' }],
       reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }],
       asks: [{ id: pending.ask_id, status: 'pending', recommended: 'Yes' }],

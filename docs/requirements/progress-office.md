@@ -16,13 +16,23 @@
 상태: 구현·자동 검증 완료. 결과는 [변경 008](../changes/008-mcp-validation.md)에 기록한다.
 
 - 도구 인자 최상위와 patch·중첩 항목을 strict 스키마로 검증하여 `close_asks` 같은 오타를 버리지 않고 오류로 반환한다. `close_ask_ids`는 patch 안이 아닌 최상위 인자다. 기존 `patch.title`은 유지한다.
-- task 허용 필드는 `id`, `title`, `owner`, `model`, `effort`, `lane`, `status`, `after`, `note`다. decision은 `title`, `body`, review는 `round`, `reviewer`, `verdict`, `note`만 받는다. patch에는 이 배열들과 `title`, `stage`, `summary`, `blockers`, `todo`를 허용한다. lane·status·reviewer의 값은 공용 계약의 enum을 따른다. 각 필드 설명을 MCP 스키마에 노출한다.
+- task 허용 필드는 `id`, `title`, `owner`, `model`, `effort`, `lane`, `status`, `after`, `note`, `todos`다. decision은 `title`, `body`, review는 `round`, `reviewer`, `verdict`, `note`만 받는다. patch에는 이 배열들과 `title`, `stage`, `summary`, `blockers`, `todo`를 허용한다. lane·status·reviewer의 값은 공용 계약의 enum을 따른다. 각 필드 설명을 MCP 스키마에 노출한다.
 - model은 전체 모델 ID를 기록한다. effort는 host가 확인한 값(예: low·medium·high)을 보내며 모르면 생략한다. owner가 사무실 좌석을 결정하고 `reviewer-*`는 감사팀, `plan-*`는 회의실로 배치한다. tasks 없이 reviews만 보고해도 리뷰어 캐릭터를 표시한다.
 - 첫 report로 받은 run_id를 이후 호출에 재사용한다. stage 접두어와 기존 병합 키(task id·decision title·review round+reviewer)는 유지한다.
 - 읽기 전용 `get_run({run_id})`은 project_path·stage·ended_at·tasks·decisions·reviews와 pending 질문 목록인 asks를 반환한다. MCP `readOnlyHint`를 선언하며 조회로 실행을 생성하거나 변경하지 않는다.
 - TypeScript 병합 경로도 task·decision·review의 허용 키 외 필드를 거부한다. HTML 원본 progress.py 자체는 수정하지 않으며 기존 병합·시간·종료 규칙과의 호환을 유지한다.
 
 완료 기준은 실제 tools/list의 필드 설명·strict 스키마·읽기 전용 선언, 오타 거부와 저장 전 검증, report 응답 상태, get_run 조회와 pending 질문, owner 좌석·reviews만 있는 캐릭터를 자동 검증하는 것이다. 전체 test·typecheck·build·원본 golden을 통과해야 한다. 실제 Claude Code 클라이언트 검증과 SDK 도구 호출 검증은 구분한다.
+
+### 작업별 Phase TODO
+
+상태: 구현·자동 검사·실제 브라우저 검증 완료. 결과는 [변경 009](../changes/009-task-todos.md)에 기록한다.
+
+task에 선택 필드 `todos`를 추가한다. 각 항목은 비어 있지 않은 문자열 `id`와 선택 필드 `text`, `phase`, `done`, `detail`만 받으며 알 수 없는 키는 거부한다. text·phase·detail은 문자열, done은 boolean이다. 같은 task 안에서 todo id로 부분 병합하고 보내지 않은 기존 todo와 필드는 보존한다. 최초 등장 순서를 유지하며 새 todo의 text가 없으면 id를 표시한다. report의 병합된 state와 get_run의 tasks에도 이 목록을 반환한다. 기존 최상위 `todo` 문자열은 유지한다.
+
+직원 현재 업무는 해당 owner의 계획·대기 작업도 포함하며, 현재 업무와 작업 기록 모두 Phase TODO의 완료 표시·진행률 막대와 기본 접힌 detail을 보여준다. 완료 표시는 보고 상태를 읽는 용도이며 앱에서 원본 상태를 수정하지 않는다. note는 줄바꿈 또는 ` · ` 구분자로 나눠 읽기 쉽게 표시한다. 업무 보드에는 TODO 완료 개수/전체 개수(x/y)를 표시한다. todos가 없는 기존 작업도 계속 읽을 수 있어야 한다.
+
+완료 기준은 TODO 부분 병합·순서·필드 보존·기본 text, 타입·알 수 없는 키 거부, report/get_run 노출, 계획·대기 작업과 현재/기록 TODO·detail·진행 표시, note 분리와 기존 작업 호환을 검증하는 것이다. 외부 progress.py와 기존 golden fixture는 변경하지 않는다.
 
 ## 화면·상태
 

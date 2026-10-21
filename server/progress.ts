@@ -5,6 +5,7 @@ import {
   STAGES,
   STATUSES,
   type ProgressData,
+  type Task,
 } from '../shared/contract.ts'
 
 const TEXT = ['title', 'stage', 'summary', 'todo', 'blockers'] as const
@@ -76,7 +77,7 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
   for (const rawTask of tasks) {
     if (!isRecord(rawTask) || typeof rawTask.id !== 'string' || !rawTask.id) fail('each task needs a string id')
     const task = rawTask
-    rejectUnknown(task, ['id', 'title', 'owner', 'model', 'effort', 'lane', 'status', 'after', 'note'], `task ${task.id}`)
+    rejectUnknown(task, ['id', 'title', 'owner', 'model', 'effort', 'lane', 'status', 'after', 'note', 'todos'], `task ${task.id}`)
     if ('lane' in task && !LANES.includes(task.lane as (typeof LANES)[number])) {
       fail(`task ${task.id}: lane must be one of ${LANES.join(', ')}`)
     }
@@ -86,6 +87,18 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
     if ('after' in task && !isStringArray(task.after)) fail(`task ${task.id}: after must be a list of task ids`)
     for (const field of ['title', 'owner', 'note', 'model', 'effort']) {
       if (field in task && typeof task[field] !== 'string') fail(`task ${task.id}: ${field} must be a string`)
+    }
+    if ('todos' in task) {
+      if (!Array.isArray(task.todos)) fail(`task ${task.id}: todos must be a list`)
+      for (const todo of task.todos) {
+        if (!isRecord(todo) || typeof todo.id !== 'string' || !todo.id) fail(`task ${task.id}: each todo needs a non-empty string id`)
+        const context = `task ${task.id} todo ${todo.id}`
+        rejectUnknown(todo, ['id', 'text', 'phase', 'done', 'detail'], context)
+        for (const field of ['text', 'phase', 'detail']) {
+          if (field in todo && typeof todo[field] !== 'string') fail(`${context}: ${field} must be a string`)
+        }
+        if ('done' in todo && typeof todo.done !== 'boolean') fail(`${context}: done must be a boolean`)
+      }
     }
   }
   const decisions = (patch.decisions ?? []) as unknown[]
@@ -106,7 +119,18 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
 
   const updatedAt = new Date(now).toISOString()
   const before = new Map((next.tasks ?? []).map((task) => [task.id, task.status]))
-  const mergedTasks = merge(next.tasks ?? [], tasks as NonNullable<ProgressData['tasks']>, (task) => task.id)
+  const mergedTasks = [...(next.tasks ?? [])]
+  for (const task of tasks as Task[]) {
+    const index = mergedTasks.findIndex((old) => old.id === task.id)
+    const previous = mergedTasks[index]
+    const merged = { ...previous, ...task }
+    if (task.todos) {
+      merged.todos = merge(previous?.todos ?? [], task.todos, (todo) => todo.id)
+        .map((todo) => ({ ...todo, text: todo.text ?? todo.id }))
+    }
+    if (index === -1) mergedTasks.push(merged)
+    else mergedTasks[index] = merged
+  }
   next.tasks = mergedTasks
   for (const task of mergedTasks) {
     task.lane ??= 'build'

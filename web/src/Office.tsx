@@ -473,6 +473,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         <span className="office-name">대표 · 나</span>
       </div>
       {office.employees.filter((employee) => overviewOpen || !visitorEnabled || employee.department === activeRoomKey).map((employee) => {
+        const todos = run.state.tasks?.find((task) => task.id === employee.task?.id)?.todos
         const position = deskPositions.get(employee.name) ?? { x: 0, y: 0 }
         const desk = departmentByKey.get(employee.department)!
         const x = position.x
@@ -501,6 +502,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px`, maxHeight: 120 } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : `${employee.name}${employee.rank ? ` · ${employee.rank}` : ''}`}</span>
             {employee.task && <strong className="office-task-title" title={employee.task.title}>{employee.task.title}</strong>}
+            {todos?.length ? <small className="office-todo-progress">TODO {todos.filter((todo) => todo.done).length}/{todos.length}</small> : null}
             <strong className="office-model-line">모델 · {employee.model ?? '미보고'}</strong>
             <strong className="office-effort-line">노력 · {employee.effort ?? '미보고'}</strong>
             {employee.task && <small>{employee.state === 'away' ? '자리 비움 · ' : ''}{employee.task.elapsedMin}분{employee.rank ? ` · ${employee.rank}` : ''}</small>}
@@ -538,7 +540,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     </div>}
     {inspectedOwner !== null && <div className="visitor-inspector-backdrop"><aside className="visitor-inspector" role="dialog" aria-modal="true" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
       if (event.key === 'Tab') {
-        const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), [tabindex="0"]')]
+        const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), summary, [tabindex="0"]')]
         const first = focusable[0]
         const last = focusable.at(-1)
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
@@ -552,7 +554,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
       if (!(target instanceof Element) || target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return
       const reportTab = target.closest('[role="tab"]')
       const reportContent = target.closest('[role="tabpanel"]')
-      if (!reportTab && !reportContent || target.closest('button:not([role="tab"]), a, input, textarea, select')) return
+      if (!reportTab && !reportContent || target.closest('button:not([role="tab"]), a, input, textarea, select, summary')) return
       event.preventDefault()
       event.stopPropagation()
       if (visitorPanel?.kind === 'employee' && visitorPanel.tab === 'current') {

@@ -215,7 +215,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     '첫 report 응답의 run_id를 받아 이후 report와 ask, get_run에서 재사용하세요.',
     'close_ask_ids는 patch 안이 아닌 report 최상위에 넣으세요.',
     'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
-    'tasks는 id, decisions는 title, reviews는 round+reviewer로 기존 항목에 merge됩니다.',
+    'tasks는 id, decisions는 title, reviews는 round+reviewer로 merge됩니다. task.todos도 같은 작업 안에서 id로 보낸 필드만 merge하고 미전송 항목과 최초 순서를 유지합니다. 새 todo의 text 생략 시 id를 쓰며, 체크 예: tasks:[{id:"FE",todos:[{id:"FE-2",done:true}]}].',
     'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
   ].join('\n')
   const schema = z.object({
@@ -239,6 +239,13 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         status: z.enum(STATUSES).optional().describe('작업 상태'),
         after: z.array(z.string()).optional().describe('선행 작업 id 목록'),
         note: z.string().optional().describe('작업 상세 또는 결과'),
+        todos: z.array(z.object({
+          id: z.string().min(1).describe('같은 작업 안 TODO merge 키; 비어있지 않은 문자열'),
+          text: z.string().optional().describe('TODO 제목; 새 항목에서 생략하면 id 사용'),
+          phase: z.string().optional().describe('TODO를 묶어 표시할 Phase 이름'),
+          done: z.boolean().optional().describe('체크 완료 여부; true로 완료, false로 해제'),
+          detail: z.string().optional().describe('접어서 표시할 TODO 상세 설명'),
+        }).strict()).optional().describe('작업 안에서 id로 필드별 merge할 TODO 목록; 미전송 항목과 최초 순서 유지, 빈 배열도 삭제하지 않음'),
       }).strict()).optional().describe('id로 merge할 작업 목록'),
       decisions: z.array(z.object({
         title: z.string().describe('결정 제목; merge 키'),

@@ -1,0 +1,44 @@
+.employee-report { min-width: 0; }
+.employee-report__tasks, .employee-report__history, .employee-report__todos { margin: 0; padding: 0; list-style: none; }
+.employee-report__tasks > li { padding: 20px 0; border-bottom: 1px solid var(--line); }
+.employee-report__tasks > li:last-child { padding-bottom: 0; border-bottom: 0; }
+.employee-report__task { min-width: 0; }
+.employee-report__task-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.employee-report__task-heading h3, .employee-report__task-heading h4 { flex: 1 1 240px; margin: 0; font-size: 21px; line-height: 1.4; overflow-wrap: anywhere; }
+.employee-report__status { flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--line-dark); border-radius: 4px; color: var(--ink-soft); background: var(--paper-light); font-size: 12px; font-weight: 700; }
+.employee-report__status[data-status="진행중"] { border-color: var(--teal); color: var(--teal-deep); background: var(--teal-pale); }
+.employee-report__status[data-status="완료"] { color: var(--teal-deep); }
+.employee-report__status[data-status="중단"] { border-color: var(--red); color: var(--red); }
+.visitor-inspector .employee-report__task-id { margin: 3px 0 8px; color: var(--ink-soft); font-size: 12px; }
+.employee-report__meta { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.employee-report__progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 16px; color: var(--teal-deep); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.employee-report__progress progress { width: 140px; height: 7px; max-width: 100%; overflow: hidden; border: 0; border-radius: 2px; appearance: none; background: var(--paper-deep); accent-color: var(--teal); }
+.employee-report__progress progress::-webkit-progress-bar { background: var(--paper-deep); }
+.employee-report__progress progress::-webkit-progress-value { background: var(--teal); }
+.employee-report__progress progress::-moz-progress-bar { background: var(--teal); }
+.employee-report__phase { margin-top: 18px; }
+.employee-report__phase h4, .employee-report__phase h5 { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+.employee-report__phase h4 span, .employee-report__phase h5 span { font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.employee-report__todo { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; }
+.employee-report__check { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-top: 2px; color: var(--ink-soft); }
+.employee-report__check svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.employee-report__todo-content { min-width: 0; flex: 1; font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.employee-report__todo--done .employee-report__todo-text { color: #52646a; text-decoration: line-through; text-decoration-thickness: 1px; }
+.employee-report__todo--done .employee-report__check { color: var(--teal); }
+.employee-report__todo details { margin-top: 4px; }
+.employee-report__todo summary { width: fit-content; min-height: 32px; padding: 4px 0; color: var(--teal-deep); cursor: pointer; font-size: 13px; }
+.employee-report__todo summary:hover { text-decoration: underline; text-underline-offset: 3px; }
+.employee-report__todo summary:focus-visible { outline: 3px solid var(--ochre); outline-offset: 3px; }
+.visitor-inspector .employee-report__detail { margin: 2px 0 8px; color: var(--ink-soft); font-size: 14px; white-space: pre-wrap; }
+.employee-report__note { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.employee-report__note-label { display: block; margin-bottom: 4px; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.visitor-inspector .employee-report__note p { margin: 3px 0; font-size: 14px; line-height: 1.7; }
+.employee-report__history > li { margin-top: 24px; }
+.employee-report__history > li:first-child { margin-top: 16px; }
+.employee-report__history > li > h3 { margin: 0 0 6px; font-size: 20px; }
+.visitor-inspector .employee-report__history > li > p { color: var(--ink-soft); font-size: 13px; }
+@media (max-width: 560px) {
+  .employee-report__task-heading h3, .employee-report__task-heading h4 { flex-basis: 100%; font-size: 19px; }
+  .employee-report__meta { gap: 4px 12px; }
+  .employee-report__tasks > li { padding-top: 18px; }
+}

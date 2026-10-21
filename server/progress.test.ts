@@ -30,7 +30,7 @@ describe('progress apply', () => {
 
   it.each([
     [{ extra: true }, 'unknown fields: extra; allowed: title, stage, summary, todo, blockers, tasks, decisions, reviews'],
-    [{ tasks: [{ id: 'T', close_asks: [] }] }, 'task T: unknown fields: close_asks; allowed: id, title, owner, model, effort, lane, status, after, note'],
+    [{ tasks: [{ id: 'T', close_asks: [] }] }, 'task T: unknown fields: close_asks; allowed: id, title, owner, model, effort, lane, status, after, note, todos'],
     [{ tasks: [{ id: 'T', started: 'forged' }] }, 'task T: unknown fields: started'],
     [{ decisions: [{ title: 'D', note: 'wrong field' }] }, 'decision D: unknown fields: note; allowed: title, body'],
     [{ reviews: [{ round: 1, reviewer: 'Karpathy Agent', status: 'PASS' }] }, 'review 1 Karpathy Agent: unknown fields: status; allowed: round, reviewer, verdict, note'],
@@ -43,6 +43,48 @@ describe('progress apply', () => {
     const before = structuredClone(original)
     expect(() => apply(original, patch, 10)).toThrow(message)
     expect(original).toEqual(before)
+  })
+
+  it('merges todos by id within a task, preserving omitted fields, items and first appearance order', () => {
+    const patch = { tasks: [{ id: 'FE', todos: [
+      { id: 'FE-1', text: '설계', phase: '계획', detail: '초안', done: true },
+      { id: 'FE-2', text: '구현', phase: '구현' },
+    ] }, { id: 'BE', todos: [{ id: 'FE-1', text: '다른 작업', done: false }] }] }
+    const original = structuredClone(patch)
+    const initial = apply({}, patch, 1_000)
+    const updated = apply(initial, { tasks: [
+      { id: 'FE', todos: [{ id: 'FE-2', done: true }, { id: 'FE-3', done: true }, { id: 'FE-3', phase: '검증' }] },
+      { id: 'FE', todos: [{ id: 'FE-1', done: false }, { id: 'FE-3', detail: '테스트' }] },
+    ] }, 2_000)
+    expect(updated.tasks?.[0].todos).toEqual([
+      { id: 'FE-1', text: '설계', phase: '계획', detail: '초안', done: false },
+      { id: 'FE-2', text: '구현', phase: '구현', done: true },
+      { id: 'FE-3', text: 'FE-3', phase: '검증', detail: '테스트', done: true },
+    ])
+    expect(updated.tasks?.[1].todos).toEqual([{ id: 'FE-1', text: '다른 작업', done: false }])
+    expect(apply(updated, { tasks: [{ id: 'FE', note: 'TODO 생략' }] }, 3_000).tasks?.[0].todos).toEqual(updated.tasks?.[0].todos)
+    expect(apply(updated, { tasks: [{ id: 'FE', todos: [] }] }, 3_000).tasks?.[0].todos).toEqual(updated.tasks?.[0].todos)
+    expect(apply({}, { tasks: [{ id: 'new', todos: [] }] }, 3_000).tasks?.[0].todos).toEqual([])
+    expect(initial.tasks?.[0].todos).toEqual(patch.tasks[0].todos)
+    expect(patch).toEqual(original)
+  })
+
+  it.each([
+    [null, 'todos must be a list'],
+    [{}, 'todos must be a list'],
+    [[null], 'each todo needs a non-empty string id'],
+    [[{ id: '' }], 'each todo needs a non-empty string id'],
+    [[{ id: 1 }], 'each todo needs a non-empty string id'],
+    [[{ id: 'todo', checked: true }], 'unknown fields: checked; allowed: id, text, phase, done, detail'],
+    [[{ id: 'todo', text: null }], 'text must be a string'],
+    [[{ id: 'todo', phase: 1 }], 'phase must be a string'],
+    [[{ id: 'todo', detail: [] }], 'detail must be a string'],
+    [[{ id: 'todo', done: 'true' }], 'done must be a boolean'],
+  ])('rejects invalid todos %j atomically', (todos, error) => {
+    const initial = apply({}, { tasks: [{ id: 'FE', todos: [{ id: 'FE-1', done: false }] }] }, 1_000)
+    const before = structuredClone(initial)
+    expect(() => apply(initial, { tasks: [{ id: 'FE', todos: [{ id: 'FE-1', done: true }] }, { id: 'BE', todos }] }, 2_000)).toThrow(error)
+    expect(initial).toEqual(before)
   })
 
   it('stamps a task when it starts and preserves the timestamp on a repeated status', () => {

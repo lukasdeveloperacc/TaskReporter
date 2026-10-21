@@ -16,6 +16,24 @@ const task = (id: string, owner: string, lane: Task['lane'] = 'build', status: T
 afterEach(() => vi.useRealTimers())
 
 describe('Office scene controls and coordinates', () => {
+  it('shows TODO counts on task cards and leaves detail Enter to the native summary', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    const run = makeRun([{ ...task('FE', 'frontend-1', 'build', '진행중'), todos: [
+      { id: 'FE-1', text: '계약 확인', done: true },
+      { id: 'FE-2', text: '화면 구현', phase: '구현', detail: '키보드로 상세 열기' },
+    ] }])
+    render(<Office run={run} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    expect(document.querySelector('[data-employee="frontend-1"]')?.textContent).toContain('TODO 1/2')
+    fireEvent.click(screen.getByRole('button', { name: 'frontend-1 현재 업무 보기' }))
+    const dialog = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' }, { timeout: 2000 })
+    const summary = dialog.querySelector('summary')!
+    expect(summary).not.toBeNull()
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    fireEvent(summary, enter)
+    expect(enter.defaultPrevented).toBe(false)
+    expect(screen.getByRole('tab', { name: '현재 업무' }).getAttribute('aria-selected')).toBe('true')
+  })
+
   it('parks idle employees in distinct department stations, including the temporary desk', () => {
     render(<Office run={makeRun([], { state: { tasks: [task('B-1', 'backend-1'), task('F-1', 'frontend-1'), task('D-1', 'designer-1')], reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }] } })} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     const names = ['backend-1', 'frontend-1', 'designer-1', 'Karpathy Agent']
