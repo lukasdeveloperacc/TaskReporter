@@ -36,6 +36,12 @@ task에 선택 필드 `todos`를 추가한다. 각 항목은 비어 있지 않�
 
 완료 기준은 TODO 부분 병합·순서·필드 보존·기본 text, 타입·알 수 없는 키 거부, report/get_run 노출, 계획·대기 작업과 현재/기록 TODO·detail·진행 표시, note 분리와 기존 작업 호환을 검증하는 것이다. 외부 progress.py와 기존 golden fixture는 변경하지 않는다.
 
+#### 진행 중 TODO와 TODO 갱신 유도
+
+로컬 구현·검증 상태다([변경 019](../changes/019-todo-progress-nudge.md)). TODO는 실제 진행 순서로 정의한다는 전제로, 업무기록은 상태가 `진행중`인 작업의 첫 미완료 TODO에 "진행 중" 표시(굵은 글씨·배지·체크 아이콘 이름 `진행 중`)를 한다. 다른 작업과 대기·완료 작업에는 표시하지 않는다. 새 TODO 필드는 추가하지 않는다.
+
+report 응답 `open_todos`는 이번 patch.tasks에 포함된 작업 중 미완료 TODO가 남은 것의 `{task_id, open, next:{id,text}}`이며 `include_state:false`에서도 제공한다. 진행중 작업의 status·owner·note가 바뀌는 report에서 그 작업의 TODO 변경(체크·추가·문구 수정 모두 포함)이 15분(`TODO_STALE_MS`) 이상 없으면 체크인 질문을 `15분째 TODO 체크 없음:`으로 시작해 만든다. 기준 시각은 처음 관찰, 담당자 변경, run 재개, 작업이 다시 `진행중`이 되는 report에서 새로 시작한다(비활성 동안의 TODO 변경은 추적하지 않음). pending·쿨다운·종료 규칙은 기존 체크인과 같아서, 답한 뒤에도 TODO를 체크하지 않으면 30분 쿨다운 후 다시 물을 수 있다. 서버는 TODO가 done이 된 시각과 작업 완료와 같은 report에서 체크됐는지를 run.state 밖(DB)에 기록해 `get_retros.signals`의 `todos_ticked`, `todos_ticked_at_close`로 보여 준다. 체크 해제 시 기록을 지운다. run.state와 progress.py golden은 바꾸지 않는다.
+
 #### 미완료 TODO의 성공 종료 방지
 
 상태: 로컬 구현·backend 대상 검사 완료. 전체 검사·독립 리뷰는 진행 중이다. [변경 010](../changes/010-agent-check-ins.md)의 추가 범위이며 위 변경 009의 완료 기록과 구분한다.

@@ -1,13 +1,14 @@
 # 데이터베이스
 
-SQLite를 Node 24의 `node:sqlite`로 사용한다. 현재 스키마와 모든 쿼리의 기준은 [server/store.ts](../server/store.ts)다. 별도 마이그레이션 파일은 없으며 시작 시 `CREATE TABLE IF NOT EXISTS`로 초기화하고, 기존 projects 테이블에 hidden 열, runs 테이블에 retro_at 열이 없으면 추가한다.
+SQLite를 Node 24의 `node:sqlite`로 사용한다. 현재 스키마와 모든 쿼리의 기준은 [server/store.ts](../server/store.ts)다. 별도 마이그레이션 파일은 없으며 시작 시 `CREATE TABLE IF NOT EXISTS`로 초기화하고, 기존 projects 테이블에 hidden 열, runs 테이블에 retro_at 열, task_clocks 테이블에 todo_changed_at 열이 없으면 추가한다.
 
 | 엔티티 | 키·관계 | 주요 데이터 |
 | --- | --- | --- |
 | projects | `path` 기본 키 | 절대 프로젝트 경로, 표시 이름, workspace 포함 여부, 최초 생성 시각, 층 숨김 여부 |
 | runs | UUID `id`, `project_path` → projects.path 외래 키 | JSON 진행 상태, 문서 경로·baseline, 마지막 보고 시각, 종료 시각 |
 | asks | UUID `id`, `run_id` → runs.id 외래 키 | 질문·JSON 선택지·추천값, 상태, 답변, 생성 시각 |
-| task_clocks | `(run_id, task_id)` 복합 기본 키, run_id → runs.id | nullable owner, 업무 진척 기준 `observed_at`, 별도 누락 쿨다운 기준 `replied_at`(nullable); 시각은 epoch ms |
+| task_clocks | `(run_id, task_id)` 복합 기본 키, run_id → runs.id | nullable owner, 업무 진척 기준 `observed_at`, 별도 누락 쿨다운 기준 `replied_at`(nullable), TODO 마지막 변경 `todo_changed_at`(nullable); 시각은 epoch ms |
+| todo_ticks | `(run_id, task_id, todo_id)` 복합 기본 키, run_id → runs.id | TODO가 done이 된 ISO 시각, 작업 완료와 같은 report인지 `at_close`(0/1); 해제 시 삭제 |
 | checks | UUID `id`, `run_id` → runs.id 외래 키 | task id·nullable owner 스냅샷, question·상태·답변, ISO 생성·응답 시각. run 회고 요청은 task id `__retro__` |
 | retros | UUID `id`, `run_id` → runs.id 외래 키, `(skill, category, created_at)` 인덱스 | 스킬·버전 문자열, CHECK로 제한한 category, evidence·nullable suggestion, ISO 제출 시각 |
 

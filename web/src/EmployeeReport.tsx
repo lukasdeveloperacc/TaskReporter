@@ -37,6 +37,8 @@ function TaskReport({ task, now, headingLevel = 3 }: { task: Task; now: number; 
   const elapsed = taskElapsed(task, now)
   const todos = task.todos ?? []
   const completed = todos.filter((todo) => todo.done).length
+  // TODOs are defined in work order, so the first unfinished one of an active task is the current one.
+  const activeId = task.status === '진행중' ? todos.find((todo) => !todo.done)?.id : undefined
   const phases = new Map<string, typeof todos>()
   for (const todo of todos) {
     const phase = todo.phase || '할 일'
@@ -65,10 +67,11 @@ function TaskReport({ task, now, headingLevel = 3 }: { task: Task; now: number; 
       </div>
       {[...phases].map(([phase, items]) => <section className="employee-report__phase" key={phase} aria-label={`${phase} TODO`}>
         <PhaseHeading>{phase}<span>{items.filter((todo) => todo.done).length}/{items.length}</span></PhaseHeading>
-        <ul className="employee-report__todos">{items.map((todo) => <li key={todo.id} className={todo.done ? 'employee-report__todo employee-report__todo--done' : 'employee-report__todo'}>
-          <span className="employee-report__check" role="img" aria-label={todo.done ? '완료' : '미완료'}><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="2" />{todo.done && <path d="m6 10 3 3 5-6" />}</svg></span>
+        <ul className="employee-report__todos">{items.map((todo) => <li key={todo.id} className={`employee-report__todo${todo.done ? ' employee-report__todo--done' : ''}${todo.id === activeId ? ' employee-report__todo--active' : ''}`}>
+          <span className="employee-report__check" role="img" aria-label={todo.done ? '완료' : todo.id === activeId ? '진행 중' : '미완료'}><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="2" />{todo.done && <path d="m6 10 3 3 5-6" />}</svg></span>
           <div className="employee-report__todo-content">
             <span className="employee-report__todo-text">{todo.text || todo.id}</span>
+            {todo.id === activeId && <span className="employee-report__todo-active" aria-hidden="true">진행 중</span>}
             {todo.detail && <details><summary>상세 보기</summary><p className="employee-report__detail">{todo.detail}</p></details>}
           </div>
         </li>)}</ul>

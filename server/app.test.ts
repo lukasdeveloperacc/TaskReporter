@@ -442,7 +442,7 @@ describe('office app', () => {
     const first = parseTool(await report(client, base, { include_state: false, patch: { stage: '구현', summary: 'Full summary', todo: 'Next', blockers: 'None', tasks: [{ id: 'T', status: '진행중' }] } }))!
     const runId = String(first.run_id)
     expect(first).not.toHaveProperty('state')
-    expect(Object.keys(first).sort()).toEqual(['run_id', 'ended_at', 'doc_changes', 'checks', 'asks'].sort())
+    expect(Object.keys(first).sort()).toEqual(['run_id', 'ended_at', 'doc_changes', 'checks', 'asks', 'open_todos'].sort())
     const askId = db.createAsk(runId, 'Continue?', ['Yes'], undefined, 0)
     db.answerAsk(askId, 'Yes')
     const compactResponse = await report(client, base, { run_id: runId, include_state: false, patch: {} })
@@ -816,7 +816,7 @@ describe('office app', () => {
     ])
     expect(all.signals).toEqual(expect.arrayContaining([
       { run_id: first, project_path: join(workspace, 'project'), stage: '완료', ended_at: expect.any(String), review_rounds: 2,
-        checks_answered: 1, checks_closed_unanswered: 0, avg_check_reply_ms: 60_000 },
+        checks_answered: 1, checks_closed_unanswered: 0, avg_check_reply_ms: 60_000, todos_ticked: 0, todos_ticked_at_close: 0 },
       expect.objectContaining({ run_id: second, stage: '중단', review_rounds: 0, checks_answered: 0 }),
     ]))
     const recent = parseTool(await client.callTool({ name: 'get_retros', arguments: { since, category: 'tool_friction' } }))!
@@ -836,6 +836,84 @@ describe('office app', () => {
       recent_missing: [{ run_id: skipped, project_path: join(workspace, 'project'), ended_at: expect.any(String) }] })
     const later = parseTool(await client.callTool({ name: 'get_retros', arguments: { since: new Date(clock).toISOString() } }))!
     expect(later.submission).toMatchObject({ ended_runs: 1, submitted: 1, empty: 1, missing: 0 })
+    await client.close()
+  })
+
+  it('returns open TODOs only for the tasks a report touched', async () => {
+    const { base, client } = await start()
+    const todos = [{ id: 'FE-1', text: '화면' }, { id: 'FE-2' }]
+    const first = parseTool(await report(client, base, { include_state: false, patch: { tasks: [
+      { id: 'FE', status: '진행중', model: 'm', effort: 'high', todos }, { id: 'BE', todos: [{ id: 'BE-1' }] }, { id: 'DOC' },
+    ] } }))!
+    expect(first.open_todos).toEqual([
+      { task_id: 'FE', open: 2, next: { id: 'FE-1', text: '화면' } }, { task_id: 'BE', open: 1, next: { id: 'BE-1', text: 'BE-1' } },
+    ])
+    const runId = String(first.run_id)
+    const next = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'FE', todos: [{ id: 'FE-1', done: true }] }] } }))!
+    expect(next.open_todos).toEqual([{ task_id: 'FE', open: 1, next: { id: 'FE-2', text: 'FE-2' } }])
+    const done = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'FE', todos: [{ id: 'FE-2', done: true }] }] } }))!
+    expect(done.open_todos).toEqual([])
+    expect(parseTool(await report(client, base, { run_id: runId, patch: {} }))!.open_todos).toEqual([])
+    await client.close()
+  })
+
+  it('asks when work moves without TODO ticks for 15 minutes and records tick timing', async () => {
+    let clock = 1_800_000_000_000
+    const { base, client } = await start({ now: () => clock })
+    const base0 = { status: '진행중', model: 'm', effort: 'high' }
+    const runId = String(parseTool(await report(client, base, { patch: { tasks: [
+      { id: 'A', ...base0, todos: [{ id: 'A-1' }, { id: 'A-2' }, { id: 'A-3' }] }, { id: 'B', ...base0, todos: [{ id: 'B-1' }] },
+    ] } }))!.run_id)
+    clock += 10 * 60_000
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'B', todos: [{ id: 'B-1', done: true }] }] } })
+    clock += 6 * 60_000
+    const quiet = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    expect(quiet.checks).toEqual([])
+    const moved = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', note: '구현 중' }, { id: 'B', note: '마무리' }] } }))!
+    expect(moved.checks).toEqual([expect.objectContaining({ task_id: 'A',
+      question: expect.stringMatching(/^15분째 TODO 체크 없음: 현재 상태.*\n.*미완료 TODO: A-1 \(A-1\); A-2 \(A-2\); A-3 \(A-3\)/s) })])
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', todos: [{ id: 'A-1', done: true }] }] } })
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', todos: [{ id: 'A-1', done: false }] }] } })
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', todos: [{ id: 'A-1', done: true }] }] } })
+    expect(db.todoTickStats(runId)).toEqual({ ticked: 2, at_close: 0 })
+    await report(client, base, { run_id: runId, patch: { tasks: [
+      { id: 'A', status: '완료', todos: [{ id: 'A-2', done: true }, { id: 'A-3', done: true }] }, { id: 'B', status: '완료' },
+    ] } })
+    expect(db.todoTickStats(runId)).toEqual({ ticked: 4, at_close: 2 })
+    await client.close()
+  })
+
+  it('starts a fresh TODO window on resume, transfer and first observation, and respects reply cooldown', async () => {
+    let clock = 1_800_000_000_000
+    const { base, client } = await start({ now: () => clock })
+    const active = { status: '진행중', model: 'm', effort: 'high' }
+    const todoChecks = (runId: string) => db.checks(runId).filter((check) => check.question.startsWith('15분째 TODO'))
+    const runId = String(parseTool(await report(client, base, { patch: { tasks: [{ id: 'A', ...active, todos: [{ id: 'A-1' }] }] } }))!.run_id)
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', status: '대기중' }] } })
+    clock += 40 * 60_000
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', status: '진행중' }] } })
+    expect(todoChecks(runId)).toEqual([])
+    clock += 16 * 60_000
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', owner: 'new-owner' }] } })
+    expect(todoChecks(runId)).toEqual([])
+    clock += 16 * 60_000
+    const lagged = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', note: 'n1' }] } }))!
+    const [check] = lagged.checks as { id: string; question: string }[]
+    expect(check!.question).toMatch(/^15분째 TODO 체크 없음/)
+    await report(client, base, { run_id: runId, check_replies: [{ check_id: check!.id, answer: '아직 A-1 진행 중' }], patch: {} })
+    clock += 5 * 60_000
+    await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'A', note: 'n2' }] } })
+    expect(todoChecks(runId)).toHaveLength(1)
+
+    clock += 60 * 60_000
+    const legacyRun = String(parseTool(await report(client, base, { patch: { tasks: [{ id: 'L', ...active, todos: [{ id: 'L-1' }] }] } }))!.run_id)
+    db.transaction(() => db.saveRun(db.getRun(legacyRun)!))
+    clock += 20 * 60_000
+    expect((await report(client, base, { run_id: legacyRun, patch: { tasks: [{ id: 'L', todos: [{ id: 'L-1', done: true }, { id: 'L-2' }], note: 'x' }] } })).isError).toBeFalsy()
+    expect(todoChecks(legacyRun)).toEqual([])
+    const failed = await report(client, base, { run_id: legacyRun, patch: { tasks: [{ id: 'L', status: '완료' }] } })
+    expect(failed.isError).toBe(true)
+    expect(db.todoTickStats(legacyRun)).toEqual({ ticked: 1, at_close: 0 })
     await client.close()
   })
 

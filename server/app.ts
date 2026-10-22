@@ -6,7 +6,7 @@ import express from 'express'
 import { existsSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import * as z from 'zod/v4'
-import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type ProgressData, type ReportArgs } from '../shared/contract.ts'
+import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type OpenTodos, type ProgressData, type ReportArgs } from '../shared/contract.ts'
 import { apply, INIT } from './progress.ts'
 import { docDiff, inWorkspace, readDoc, resolveDoc, watchDoc } from './docs.ts'
 import { openStore, type AskRow, type RunRow } from './store.ts'
@@ -41,6 +41,14 @@ function originAllowed(origin: string, req: Request, devOrigin?: string): boolea
 
 function isEnded(run: RunRow): boolean {
   return CLOSED.includes((run.state.stage ?? '').split(' ')[0] as (typeof CLOSED)[number])
+}
+
+// Remaining TODOs of the tasks a report touched, so callers see what is left even without state.
+function openTodos(state: ProgressData, taskIds: string[]): OpenTodos[] {
+  return (state.tasks ?? []).filter((task) => taskIds.includes(task.id)).flatMap((task) => {
+    const open = (task.todos ?? []).filter((todo) => todo.done !== true)
+    return open.length ? [{ task_id: task.id, open: open.length, next: { id: open[0]!.id, text: open[0]!.text || open[0]!.id } }] : []
+  })
 }
 
 function toolError(message: string): never {
@@ -203,6 +211,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       }
       db.saveRun(run)
       db.reconcileChecks(run.id, previousState, run.state, stamp, wasEnded)
+      db.recordTodoTicks(run.id, previousState, run.state, stamp)
       if (args.retro) db.replaceRetro(run.id, args.retro, stamp)
       db.syncRetroCheck(run.id, ended, stamp, !wasEnded)
       closedIds = args.close_ask_ids ? db.closeAsks(run.id, args.close_ask_ids) : []
@@ -217,6 +226,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       checks: db.checks(run.id, true),
       asks: db.asks(run.id).filter((ask) => ask.status === 'answered')
         .map((ask) => ({ ask_id: ask.id, status: 'answered' as const, answer: ask.answer! })),
+      open_todos: openTodos(run.state, args.patch.tasks?.map((task) => task.id) ?? []),
       run_id: run.id, doc_changes: changes, ended_at: run.ended_at,
       ...(args.include_state === false ? {} : { state: run.state }),
     }
@@ -252,6 +262,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
     'report 응답의 checks는 작업 상태 설명을 요청합니다. 확인한 뒤 check_replies:[{check_id,answer}]로 답하세요. 답변은 설명일 뿐 성공 판정이 아닙니다. model/effort가 없으면 host/runtime에서 실제 값을 확인해 같은 task id patch로 보고하고, 확인할 수 없으면 이유를 설명하고 값을 비워 두세요.',
     'retro는 run을 끝내는(완료·중단, finish 자동 종료 포함) report 또는 종료된 run의 report 최상위에 최대 3개 보냅니다. 스킬 지시·도구·프로세스 문제만 적고 코드 결함은 리뷰에 남기세요. 없으면 retro:[]. 다시 보내면 run 단위로 교체됩니다. 빠뜨리면 checks의 task_id __retro__ 요청이 한 번 오며 patch:{}와 retro로 답하세요. 집계는 읽기 전용 get_retros로 조회합니다.',
+    'report 응답 open_todos는 이번 patch.tasks의 남은 TODO와 첫 미완료 next입니다. TODO는 실제 진행 순서로 정의하고, 끝날 때마다 바로 done:true로 보고하세요(완료 직전 몰아서 체크 금지). 진행중 task의 상태·note만 바뀌고 15분째 TODO 체크가 없으면 체크인이 옵니다.',
     '체크인이 남은 TODO를 보여주면 실제 작업을 해결한 뒤 해당 id를 done:true로 보고하세요. 미완료 TODO가 남은 task는 완료할 수 없고, run stage 완료에도 모든 task의 TODO 완료가 필요합니다. 중단은 미완료 TODO를 보존하는 비성공 종료입니다.',
   ].join('\n')
   const retroItemSchema = z.object({
@@ -323,6 +334,8 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     run_id: z.string(), doc_changes: z.array(z.object({ path: z.string(), diff: z.string() })),
     state: z.record(z.string(), z.unknown()).optional(), ended_at: z.string().nullable(), checks: z.array(z.unknown()),
     asks: z.array(answeredAskSchema).describe('답변된 결재를 반복 전달; ask_id로 중복 처리, 조회는 수신 확인이 아님'),
+    open_todos: z.array(z.object({ task_id: z.string(), open: z.number(), next: z.object({ id: z.string(), text: z.string() }) }))
+      .describe('이번 patch.tasks에 포함된 task 중 미완료 TODO가 남은 것; next는 목록 순서상 첫 미완료(웹에서 진행 중 표시)'),
   })
   const askOutputSchema = z.object({
     status: z.enum(['pending', 'answered']), ask_id: z.string(), answer: z.string().optional(),
@@ -386,10 +399,12 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     const signals = [...new Set(kept.map((row) => row.run_id))].map((runId) => {
       const run = db.getRun(runId)!
       const stats = db.checkStats(runId)
+      const ticks = db.todoTickStats(runId)
       return {
         run_id: runId, project_path: run.project_path, stage: run.state.stage ?? null, ended_at: run.ended_at,
         review_rounds: Math.max(0, ...(run.state.reviews ?? []).map((review) => review.round)),
         checks_answered: stats.answered, checks_closed_unanswered: stats.closed_unanswered, avg_check_reply_ms: stats.avg_reply_ms,
+        todos_ticked: ticks.ticked, todos_ticked_at_close: ticks.at_close,
       }
     })
     return { groups, signals, truncated, submission: db.retroSubmission(filter, RECENT_MISSING_LIMIT) }

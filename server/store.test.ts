@@ -47,7 +47,10 @@ describe('store', () => {
         recommended TEXT, status TEXT NOT NULL CHECK(status IN ('pending','answered','closed')), answer TEXT, created_at TEXT NOT NULL);
       INSERT INTO projects VALUES ('/workspace/old', 'old', 1, '1970-01-01T00:00:00.000Z');
       INSERT INTO runs VALUES ('old-run', '/workspace/old', NULL, '# legacy baseline', '{"title":"Legacy","tasks":[{"id":"T","status":"진행중"}]}', '1970-01-01T00:00:00.000Z', NULL);
-      INSERT INTO asks VALUES ('old-ask', 'old-run', 'Legacy?', '["Yes"]', NULL, 'pending', NULL, '1970-01-01T00:00:00.000Z');`)
+      INSERT INTO asks VALUES ('old-ask', 'old-run', 'Legacy?', '["Yes"]', NULL, 'pending', NULL, '1970-01-01T00:00:00.000Z');
+      CREATE TABLE task_clocks (run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL, owner TEXT,
+        observed_at INTEGER NOT NULL, replied_at INTEGER, PRIMARY KEY(run_id, task_id));
+      INSERT INTO task_clocks VALUES ('old-run', 'T', NULL, 0, NULL);`)
     legacy.close()
     db = openStore(file)
     expect(db.snapshot(() => true).projects[0]).toMatchObject({ path: '/workspace/old', hidden: false })

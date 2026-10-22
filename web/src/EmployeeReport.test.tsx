@@ -64,6 +64,22 @@ describe('EmployeeReport', () => {
     expect(onTabChange).not.toHaveBeenCalled()
   })
 
+  it('marks only the first unfinished TODO of an active task as in progress', () => {
+    const todos = [{ id: 'A-1', text: '조사', done: true }, { id: 'A-2', text: '구현' }, { id: 'A-3', text: '검증' }]
+    const run = makeRun('current', '현재 실행', [
+      { id: 'A', owner: 'staff-a', title: '진행 작업', status: '진행중', todos },
+      { id: 'B', owner: 'staff-a', title: '대기 작업', status: '대기중', todos: [{ id: 'B-1', text: '대기 할 일' }] },
+    ])
+    render(<EmployeeReport owner="staff-a" runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={Date.parse('2026-10-20T11:00:00Z')} />)
+    expect(screen.getAllByText('진행 중')).toHaveLength(1)
+    const active = screen.getByText('구현').closest('li')!
+    expect(active.className).toContain('employee-report__todo--active')
+    expect(within(active).getByRole('img', { name: '진행 중' })).toBeTruthy()
+    expect(screen.getByText('검증').closest('li')!.className).not.toContain('--active')
+    expect(screen.getByText('대기 할 일').closest('li')!.className).not.toContain('--active')
+    expect(within(screen.getByText('조사').closest('li')!).getByRole('img', { name: '완료' })).toBeTruthy()
+  })
+
   it('sorts real prior runs by valid latest timestamp, includes ended runs and refreshes from props', () => {
     const recent = makeRun('recent', '최근 실행', [{ id: 'r', owner: 'staff-a', title: '최근 작업', status: '완료' }], { ended_at: '2026-10-19T12:00:00Z' })
     const invalid = makeRun('invalid', '날짜 없는 실행', [{ id: 'i', owner: 'staff-a', title: '날짜 작업' }], { last_report_at: 'bad-date' })

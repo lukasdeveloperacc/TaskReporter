@@ -25,6 +25,9 @@
 .employee-report__todo-content { min-width: 0; flex: 1; font-size: 16px; line-height: 1.6; overflow-wrap: anywhere; }
 .employee-report__todo--done .employee-report__todo-text { color: #52646a; text-decoration: line-through; text-decoration-thickness: 1px; }
 .employee-report__todo--done .employee-report__check { color: var(--teal); }
+.employee-report__todo--active .employee-report__check { color: var(--teal-deep); }
+.employee-report__todo--active .employee-report__todo-text { color: var(--ink); font-weight: 700; }
+.employee-report__todo-active { display: inline-block; margin-left: 8px; padding: 0 6px; border: 1px solid var(--teal); border-radius: 4px; color: var(--teal-deep); background: var(--teal-pale); font-size: 12px; font-weight: 700; line-height: 1.6; vertical-align: 1px; }
 .employee-report__todo details { margin-top: 4px; }
 .employee-report__todo summary { width: fit-content; min-height: 32px; padding: 4px 0; color: var(--teal-deep); cursor: pointer; font-size: 13px; }
 .employee-report__todo summary:hover { text-decoration: underline; text-underline-offset: 3px; }

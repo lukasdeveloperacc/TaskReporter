@@ -1,6 +1,7 @@
 export const PORT = 4780
 export const ASK_WAIT_MS = 100_000
 export const STALE_MS = 1_800_000
+export const TODO_STALE_MS = 900_000
 
 export const STAGES = ['계획', '구현', '리뷰', '수정', '마무리', '완료', '중단'] as const
 export const LANES = ['plan', 'build', 'review', 'fix', 'finish'] as const
@@ -140,7 +141,8 @@ export type ReportArgs = {
   retro?: RetroItem[]
 }
 
-export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[] }
+export type OpenTodos = { task_id: string; open: number; next: { id: string; text: string } }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[]; open_todos: OpenTodos[] }
 
 export type AskArgs = {
   run_id: string

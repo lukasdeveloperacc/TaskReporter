@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { RETRO_CATEGORIES, RETRO_TASK_ID, STALE_MS, type AskView, type CheckView, type ProgressData, type RetroItem, type RetroRow, type RetroSubmission, type RunRetro, type StateSnapshot } from '../shared/contract.ts'
+import { RETRO_CATEGORIES, RETRO_TASK_ID, STALE_MS, TODO_STALE_MS, type AskView, type CheckView, type ProgressData, type RetroItem, type RetroRow, type RetroSubmission, type RunRetro, type StateSnapshot } from '../shared/contract.ts'
 
 export type RunRow = {
   id: string
@@ -57,12 +57,19 @@ export function openStore(file: string) {
       evidence TEXT NOT NULL, suggestion TEXT, created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS retros_skill_category ON retros(skill, category, created_at);
+    CREATE TABLE IF NOT EXISTS todo_ticks (
+      run_id TEXT NOT NULL REFERENCES runs(id), task_id TEXT NOT NULL, todo_id TEXT NOT NULL,
+      done_at TEXT NOT NULL, at_close INTEGER NOT NULL, PRIMARY KEY(run_id, task_id, todo_id)
+    );
   `)
   if (!(db.prepare('PRAGMA table_info(projects)').all() as { name: string }[]).some((column) => column.name === 'hidden')) {
     db.exec('ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0')
   }
   if (!(db.prepare('PRAGMA table_info(runs)').all() as { name: string }[]).some((column) => column.name === 'retro_at')) {
     db.exec('ALTER TABLE runs ADD COLUMN retro_at TEXT')
+  }
+  if (!(db.prepare('PRAGMA table_info(task_clocks)').all() as { name: string }[]).some((column) => column.name === 'todo_changed_at')) {
+    db.exec('ALTER TABLE task_clocks ADD COLUMN todo_changed_at INTEGER')
   }
 
   return {
@@ -187,26 +194,32 @@ export function openStore(file: string) {
         const old = before.get(task.id)
         const owner = task.owner?.trim() || null
         const oldOwner = old?.owner?.trim() || null
-        const priorClock = db.prepare('SELECT * FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null; observed_at: number; replied_at: number | null } | undefined
+        const priorClock = db.prepare('SELECT * FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null; observed_at: number; replied_at: number | null; todo_changed_at: number | null } | undefined
         const transferred = (old !== undefined && oldOwner !== owner) || (priorClock !== undefined && priorClock.owner !== owner)
         if (transferred) db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, task.id)
         const meaningful = old !== undefined && (old.status !== task.status || old.owner !== task.owner || old.note !== task.note || JSON.stringify(old.todos ?? []) !== JSON.stringify(task.todos ?? []))
         const observed = reset || !priorClock || transferred || meaningful ? stamp : priorClock.observed_at
+        const todosChanged = old !== undefined && JSON.stringify(old.todos ?? []) !== JSON.stringify(task.todos ?? [])
+        // Any TODO edit counts, and becoming active starts a fresh window since inactive edits are not tracked.
+        const todoChangedAt = reset || !priorClock || transferred || todosChanged || old?.status !== '진행중' || priorClock.todo_changed_at === null ? stamp : priorClock.todo_changed_at
         const repliedAt = transferred ? null : priorClock?.replied_at ?? null
-        db.prepare(`INSERT INTO task_clocks(run_id, task_id, owner, observed_at, replied_at)
-          VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, task_id) DO UPDATE SET owner=excluded.owner,
-          observed_at=excluded.observed_at, replied_at=excluded.replied_at`)
-          .run(runId, task.id, owner, observed, repliedAt)
+        db.prepare(`INSERT INTO task_clocks(run_id, task_id, owner, observed_at, replied_at, todo_changed_at)
+          VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, task_id) DO UPDATE SET owner=excluded.owner,
+          observed_at=excluded.observed_at, replied_at=excluded.replied_at, todo_changed_at=excluded.todo_changed_at`)
+          .run(runId, task.id, owner, observed, repliedAt, todoChangedAt)
         const pending = db.prepare("SELECT id FROM checks WHERE run_id=? AND task_id=? AND status='pending'").get(runId, task.id)
         const missing = !task.model?.trim() || !task.effort?.trim()
         const cooldown = !transferred && priorClock?.owner === owner && priorClock.replied_at !== null && stamp - priorClock.replied_at < STALE_MS
-        if (!ended && !pending && (missing && !cooldown || stamp - observed >= STALE_MS && !cooldown)) {
+        const unfinished = (task.todos ?? []).filter((todo) => todo.done !== true)
+        // Work moved (status/owner/note) but no TODO was ticked for a while: ask before the ticks pile up at the end.
+        const workChanged = old !== undefined && (old.status !== task.status || old.owner !== task.owner || old.note !== task.note)
+        const todoLag = unfinished.length > 0 && workChanged && stamp - todoChangedAt >= TODO_STALE_MS
+        if (!ended && !pending && !cooldown && (missing || stamp - observed >= STALE_MS || todoLag)) {
           const missingFields = [!task.model?.trim() && 'model', !task.effort?.trim() && 'effort'].filter(Boolean).join(', ')
-          const unfinished = (task.todos ?? []).filter((todo) => todo.done !== true)
           const todoList = unfinished.length ? `미완료 TODO: ${unfinished.map((todo) => `${todo.id} (${todo.text ?? todo.id})`).join('; ')}. get_run으로 최신 TODO를 확인하고 실제 끝난 항목만 done:true로 보고하세요.` : ''
           const metadata = missingFields ? `누락: ${missingFields}. host/runtime에서 실제 값을 확인해 같은 task id의 patch.tasks로 보고하세요. 확인 불가하면 이유를 설명하고 값을 비워 두세요(추측 금지).` : ''
           const question = [
-            `${stamp - observed >= STALE_MS ? '30분째 변화 없음: ' : ''}현재 상태·막힌 점을 check_replies로 알려 주세요.`,
+            `${stamp - observed >= STALE_MS ? '30분째 변화 없음: ' : todoLag ? `${TODO_STALE_MS / 60_000}분째 TODO 체크 없음: ` : ''}현재 상태·막힌 점을 check_replies로 알려 주세요.`,
             [metadata, todoList].filter(Boolean).join(' '),
           ].filter(Boolean).join('\n')
           db.prepare("INSERT INTO checks VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)")
@@ -226,6 +239,26 @@ export function openStore(file: string) {
       if (ended) {
         db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id<>? AND status='pending'").run(runId, RETRO_TASK_ID)
       }
+    },
+    // Ticks live outside run.state so the merged state stays identical to progress.py.
+    recordTodoTicks(runId: string, previous: ProgressData | undefined, state: ProgressData, now: number): void {
+      const before = new Map((previous?.tasks ?? []).map((task) => [task.id, task]))
+      for (const task of state.tasks ?? []) {
+        const old = before.get(task.id)
+        const wasDone = new Set((old?.todos ?? []).filter((todo) => todo.done === true).map((todo) => todo.id))
+        const closing = task.status === '완료' && old?.status !== '완료'
+        for (const todo of task.todos ?? []) {
+          if (todo.done === true && !wasDone.has(todo.id)) {
+            db.prepare(`INSERT INTO todo_ticks VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, task_id, todo_id)
+              DO UPDATE SET done_at=excluded.done_at, at_close=excluded.at_close`).run(runId, task.id, todo.id, new Date(now).toISOString(), Number(closing))
+          } else if (todo.done !== true && wasDone.has(todo.id)) {
+            db.prepare('DELETE FROM todo_ticks WHERE run_id=? AND task_id=? AND todo_id=?').run(runId, task.id, todo.id)
+          }
+        }
+      }
+    },
+    todoTickStats(runId: string): { ticked: number; at_close: number } {
+      return db.prepare('SELECT COUNT(*) AS ticked, COALESCE(SUM(at_close), 0) AS at_close FROM todo_ticks WHERE run_id=?').get(runId) as { ticked: number; at_close: number }
     },
     replaceRetro(runId: string, items: RetroItem[], now: number): void {
       const stamp = new Date(now).toISOString()

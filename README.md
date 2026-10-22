@@ -35,6 +35,10 @@ docker compose logs -f office
 
 타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 기본적으로 병합된 `state`와 `ended_at`을 포함합니다. 선택 입력 `include_state:false`는 응답의 `state`만 생략하고 나머지 필드를 유지합니다. 미지정 또는 true는 기존 응답을 유지하며 `get_run.state`로 전체 상태를 읽습니다. 스킬은 `report.inputSchema.properties.include_state`의 boolean 지원을 확인한 뒤 사용합니다. 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending·answered 질문을 조회합니다. `report.asks`는 `{ask_id,status:"answered",answer}`를 반복 전달하고 `get_run.asks`는 기존 `id` 등을 유지하면서 `ask_id`를 추가합니다. `ask_id`로 중복 처리하세요. 조회·전송은 수신 확인이 아니며, 보고가 없는 결재 대기 중에는 같은 `ask_id` 재호출을 계속해야 합니다. MCP `tools/list`의 각 도구 `outputSchema`에서 `asks` 및 `retry_after_sec` 지원을 확인할 수 있습니다.
 
+### TODO 진행
+
+`report` 응답의 `open_todos`는 이번 patch에 포함된 작업의 남은 TODO 수와 다음 TODO(`next`)입니다. TODO는 실제 진행 순서로 정의하고 끝날 때마다 `done:true`로 보고하세요. 업무기록은 진행중 작업의 첫 미완료 TODO를 "진행 중"으로 표시합니다. 작업 상태·note만 바뀌고 15분째 TODO 체크가 없으면 체크인이 오며, 마지막에 몰아서 체크한 수는 `get_retros.signals.todos_ticked_at_close`로 볼 수 있습니다.
+
 ### run 회고
 
 run을 끝내는 `report`(또는 종료된 run에 `patch:{}`와 함께)에 최상위 `retro`로 스킬 지시·도구·프로세스에서 막힌 점을 최대 3개 보냅니다. 예: `"retro":[{"skill":"basic-team","skill_version":"0.1.0+bb590a2","category":"tool_friction","evidence":"리뷰 단계 ask가 MCP 타임아웃으로 끊김","suggestion":"MCP_TOOL_TIMEOUT 안내를 Finish 절에 추가"}]`. 없으면 `"retro":[]`를 보냅니다. 빠뜨리면 `checks`에 `task_id:"__retro__"` 요청이 한 번 옵니다. 읽기 전용 `get_retros({skill?,category?,since?,project_path?})`는 skill+category별 묶음과 서버 계산 신호를 돌려주며, 서로 다른 run에서 반복된 묶음을 `candidate:true`로 표시합니다. `submission`은 종료된 run 중 회고 제출·빈 제출·미제출 수와 최근 미제출 run을 보여 주며, 배포 이후만 보려면 `since`를 씁니다. 자세한 계약은 [결재·실행 요구사항](docs/requirements/decisions-integration.md#run-회고)에 있습니다.
