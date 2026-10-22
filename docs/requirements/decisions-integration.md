@@ -8,6 +8,16 @@
 
 report의 선택 입력 include_state는 boolean이다. false면 응답 state만 생략하고 run_id·ended_at·doc_changes·checks·asks는 유지한다. 미지정/true는 기존 응답이다. get_run은 기존 필드와 함께 전체 state를 반환한다. 스킬은 tools/list의 report.inputSchema.properties.include_state로 지원을 확인한다. DB·기본 응답 정책은 바꾸지 않는다.
 
+## run 회고
+
+로컬 구현·검증 상태다(배포 전). 범위·검증은 [변경 017](../changes/017-run-retro.md)을 따른다. 목적은 basic-* 스킬 실행이 끝날 때 스킬 지시·도구·프로세스에서 막힌 점을 모아 이후 스킬·MCP 개선의 근거로 쓰는 것이다. 코드 결함은 리뷰 기록에 남기며 회고 대상이 아니다.
+
+- report 최상위 선택 입력 `retro`는 `{skill, skill_version, category, evidence, suggestion?}` 0–3개다. category는 `instruction_gap`·`tool_friction`·`user_correction`·`review_miss`·`other`, skill·skill_version은 1–64자, evidence·suggestion은 500자 이하다. skill_version(예: `0.1.0+bb590a2`)은 파싱하지 않는 문자열이다. 알 수 없는 키는 거부한다.
+- patch 병합 후 run이 종료 상태(finish task 자동 종료 포함)일 때만 받는다. 아니면 `retro requires ended run` 오류이며 report 전체가 롤백된다. 종료된 run에는 `patch:{}`와 retro만 보낼 수 있고 재개되지 않으며 ended_at도 유지한다. 다시 보내면 run 단위로 교체하고, 같은 내용 재전송은 최초 제출 시각을 유지한다. `[]`는 회고 없음 제출이다. 작업 id `__retro__`는 예약어로 거부한다.
+- 회고 없이 run을 끝내는 report에서만(이미 끝난 기존 run의 이후 report에서는 아님) 그 run에 `task_id:"__retro__"`, owner null인 체크를 한 번만 만든다. 이 체크는 종료 정리에서 닫히지 않는다. retro 제출 시 `retro <n>건`으로 answered가 되고, check_replies 텍스트 답도 받는다. run이 재개되면 닫히며 다시 만들지 않는다. 답하지 않아도 완료를 막지 않는다.
+- `get_run.retro`는 `{submitted_at, items}`다. 읽기 전용 `get_retros({skill?, category?, since?, project_path?})`는 최근 200행 기준으로 skill+category 묶음(`run_count`, `skill_versions`, `last_at`, 서로 다른 run이 2개 이상이면 `candidate:true`)과 run별 서버 신호(stage, ended_at, 최대 review round, `__retro__`를 제외한 체크 answered·미응답 closed 수·평균 응답 ms), `truncated`를 반환한다. since(시간대가 있는 ISO date-time)로 스킬 수정 전후를 나누며 project_path는 절대 경로여야 한다. 200행 제한에서 한 run의 항목이 잘릴 수 있고 이때 truncated가 true다. ask 대기 시간은 답변 시각을 저장하지 않아 제공하지 않는다.
+- 스킬은 `report.inputSchema.properties.retro`로 지원을 확인한다.
+
 ## ask 계약
 
 `POST /mcp`의 `ask`는 `run_id`, `question`, `options`와 선택적인 `recommended`, `ask_id`를 받는다. 서버 선택지는 1–6개를 허용하고 basic-team은 구체적인 2–4개와 그중 추천값을 보낸다. 신규 질문은 DB에 pending으로 저장한다. 기본 100000ms(기존 295초에서 단축) 안에 브라우저 답이 오면 `{status:"answered",answer,ask_id}`, 시간 내 답이 없으면 `{status:"pending",ask_id,retry_after_sec:0,message:"같은 ask_id로 ask를 다시 호출하세요. 새 질문을 만들지 마세요."}`를 반환한다. pending은 질문 종료가 아니다. retry_after_sec 뒤 같은 id로 재호출하고 질문을 중복 생성하지 않는다. 저장된 답은 같은 id 재호출에서도 반환된다. 정확한 타입은 [contract.ts](../../shared/contract.ts)다.

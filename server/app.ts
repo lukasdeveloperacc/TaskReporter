@@ -6,7 +6,7 @@ import express from 'express'
 import { existsSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import * as z from 'zod/v4'
-import { ASK_WAIT_MS, CLOSED, LANES, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type ProgressData, type ReportArgs } from '../shared/contract.ts'
+import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type ProgressData, type ReportArgs } from '../shared/contract.ts'
 import { apply, INIT } from './progress.ts'
 import { docDiff, inWorkspace, readDoc, resolveDoc, watchDoc } from './docs.ts'
 import { openStore, type AskRow, type RunRow } from './store.ts'
@@ -25,6 +25,7 @@ export type CreateAppOptions = {
 }
 
 const ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
+const RETRO_LIMIT = 200
 
 function originAllowed(origin: string, req: Request, devOrigin?: string): boolean {
   try {
@@ -145,6 +146,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     if (args.run_id && !existing) toolError(`unknown run_id: ${args.run_id}`)
     if (existing && existing.project_path !== projectPath) toolError('run_id belongs to a different project')
     if (args.check_replies?.length && !args.run_id) toolError('check_replies require run_id')
+    if (args.patch.tasks?.some((task) => task.id === RETRO_TASK_ID)) toolError(`task id ${RETRO_TASK_ID} is reserved`)
     const duplicateReplies = new Map<string, string>()
     for (const reply of args.check_replies ?? []) {
       const prior = duplicateReplies.get(reply.check_id)
@@ -185,6 +187,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       }
     }
     const ended = isEnded(run)
+    if (args.retro && !ended) toolError('retro requires ended run')
     run.ended_at = ended ? (run.ended_at ?? new Date(stamp).toISOString()) : null
     run.last_report_at = new Date(stamp).toISOString()
     let closedIds: string[] = []
@@ -199,6 +202,8 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       }
       db.saveRun(run)
       db.reconcileChecks(run.id, previousState, run.state, stamp, wasEnded)
+      if (args.retro) db.replaceRetro(run.id, args.retro, stamp)
+      db.syncRetroCheck(run.id, ended, stamp, !wasEnded)
       closedIds = args.close_ask_ids ? db.closeAsks(run.id, args.close_ask_ids) : []
       if (ended) closedIds = [...new Set([...closedIds, ...db.closeAsks(run.id)])]
     })
@@ -245,8 +250,16 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     'tasks는 id, decisions는 title, reviews는 round+reviewer로 merge됩니다. task.todos도 같은 작업 안에서 id로 보낸 필드만 merge하고 미전송 항목과 최초 순서를 유지합니다. 새 todo의 text 생략 시 id를 쓰며, 체크 예: tasks:[{id:"FE",todos:[{id:"FE-2",done:true}]}].',
     'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
     'report 응답의 checks는 작업 상태 설명을 요청합니다. 확인한 뒤 check_replies:[{check_id,answer}]로 답하세요. 답변은 설명일 뿐 성공 판정이 아닙니다. model/effort가 없으면 host/runtime에서 실제 값을 확인해 같은 task id patch로 보고하고, 확인할 수 없으면 이유를 설명하고 값을 비워 두세요.',
+    'retro는 run을 끝내는(완료·중단, finish 자동 종료 포함) report 또는 종료된 run의 report 최상위에 최대 3개 보냅니다. 스킬 지시·도구·프로세스 문제만 적고 코드 결함은 리뷰에 남기세요. 없으면 retro:[]. 다시 보내면 run 단위로 교체됩니다. 빠뜨리면 checks의 task_id __retro__ 요청이 한 번 오며 patch:{}와 retro로 답하세요. 집계는 읽기 전용 get_retros로 조회합니다.',
     '체크인이 남은 TODO를 보여주면 실제 작업을 해결한 뒤 해당 id를 done:true로 보고하세요. 미완료 TODO가 남은 task는 완료할 수 없고, run stage 완료에도 모든 task의 TODO 완료가 필요합니다. 중단은 미완료 TODO를 보존하는 비성공 종료입니다.',
   ].join('\n')
+  const retroItemSchema = z.object({
+    skill: z.string().trim().min(1).max(64).describe('사용자가 호출한 진입 스킬 이름 (예: basic-team)'),
+    skill_version: z.string().trim().min(1).max(64).describe('플러그인 버전+커밋 (예: 0.1.0+bb590a2); 불투명 문자열'),
+    category: z.enum(RETRO_CATEGORIES).describe('문제 유형'),
+    evidence: z.string().trim().min(1).max(500).describe('무슨 일이 있었는지 한 줄; 단계·파일·도구 포함'),
+    suggestion: z.string().trim().min(1).max(500).optional().describe('개선 제안'),
+  }).strict()
   const schema = z.object({
     project_path: z.string().describe('프로젝트의 절대 경로'),
     include_state: z.boolean().optional().describe('false면 응답 state만 생략; 미지정/true는 포함. 전체 상태는 get_run.state로 조회'),
@@ -292,6 +305,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     check_replies: z.array(z.object({
       check_id: z.string().trim().min(1), answer: z.string().trim().min(1),
     }).strict()).optional().describe('report 응답 checks에 대한 설명; 기존 run_id 필수'),
+    retro: z.array(retroItemSchema).max(3).optional().describe('run 종료 회고 최대 3개; patch 밖 최상위 필드, 종료 상태에서만 허용, []는 회고 없음, 재전송 시 교체'),
   }).strict()
   const askSchema = z.object({
     run_id: z.string().describe('report 응답의 실행 id'),
@@ -323,7 +337,57 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     run_id: z.string(), project_path: z.string(), stage: z.string().optional(), ended_at: z.string().nullable(),
     tasks: z.array(z.unknown()), decisions: z.array(z.unknown()), reviews: z.array(z.unknown()),
     asks: z.array(runAskSchema).describe('pending과 answered 결재; answered는 ask_id로 중복 처리'), checks: z.array(z.unknown()),
+    retro: z.object({ submitted_at: z.string().nullable(), items: z.array(z.unknown()) }).describe('제출된 회고; submitted_at null이면 미제출'),
   })
+
+  const getRetrosSchema = z.object({
+    skill: z.string().trim().min(1).optional().describe('스킬 이름 필터'),
+    category: z.enum(RETRO_CATEGORIES).optional().describe('문제 유형 필터'),
+    since: z.iso.datetime({ offset: true }).optional().describe('이 시각(ISO) 이후 회고만; 스킬 수정 전후 구분'),
+    project_path: z.string().refine(isAbsolute, 'project_path must be absolute').optional().describe('프로젝트 절대 경로 필터'),
+  }).strict()
+  const getRetrosOutputSchema = z.object({
+    groups: z.array(z.object({
+      skill: z.string(), category: z.string(), run_count: z.number(), skill_versions: z.array(z.string()),
+      last_at: z.string(), candidate: z.boolean(), items: z.array(z.unknown()),
+    })).describe('skill+category 묶음; candidate 우선, run_count·last_at 내림차순'),
+    signals: z.array(z.unknown()).describe('회고가 있는 run별 서버 계산 신호'),
+    truncated: z.boolean().describe(`최근 ${RETRO_LIMIT}개 회고 행으로 잘렸는지`),
+  })
+
+  const getRetros = (args: z.infer<typeof getRetrosSchema>) => {
+    const rows = db.retros({
+      ...args,
+      since: args.since && new Date(args.since).toISOString(),
+      project_path: args.project_path && resolve(args.project_path),
+    }, RETRO_LIMIT + 1)
+    const truncated = rows.length > RETRO_LIMIT
+    const kept = rows.slice(0, RETRO_LIMIT)
+    const grouped = new Map<string, typeof kept>()
+    for (const row of kept) {
+      const key = `${row.skill}\u0000${row.category}`
+      grouped.set(key, [...(grouped.get(key) ?? []), row])
+    }
+    const groups = [...grouped.values()].map((items) => {
+      const runCount = new Set(items.map((item) => item.run_id)).size
+      return {
+        skill: items[0]!.skill, category: items[0]!.category, run_count: runCount,
+        skill_versions: [...new Set(items.map((item) => item.skill_version))],
+        last_at: items[0]!.created_at, candidate: runCount >= 2,
+        items: items.map(({ skill: _s, category: _c, ...item }) => item),
+      }
+    }).sort((a, b) => Number(b.candidate) - Number(a.candidate) || b.run_count - a.run_count || b.last_at.localeCompare(a.last_at))
+    const signals = [...new Set(kept.map((row) => row.run_id))].map((runId) => {
+      const run = db.getRun(runId)!
+      const stats = db.checkStats(runId)
+      return {
+        run_id: runId, project_path: run.project_path, stage: run.state.stage ?? null, ended_at: run.ended_at,
+        review_rounds: Math.max(0, ...(run.state.reviews ?? []).map((review) => review.round)),
+        checks_answered: stats.answered, checks_closed_unanswered: stats.closed_unanswered, avg_check_reply_ms: stats.avg_reply_ms,
+      }
+    })
+    return { groups, signals, truncated }
+  }
 
   app.post('/mcp', async (req, res) => {
     const server = new McpServer({ name: 'office-team-reporter', version: '1.0.0' }, { instructions: usage })
@@ -342,8 +406,15 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
         run_id: run.id, project_path: run.project_path, state: run.state, stage: run.state.stage, ended_at: run.ended_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
+        retro: db.runRetro(run.id),
       })
     })
+    server.registerTool('get_retros', {
+      description: 'Read run retros grouped by skill+category with per-run signals, without changing state; candidate=true when 2+ distinct runs repeat it. Use since to separate before/after a skill fix.',
+      inputSchema: getRetrosSchema,
+      outputSchema: getRetrosOutputSchema,
+      annotations: { readOnlyHint: true },
+    }, async (args) => jsonResult(getRetros(args)))
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
     res.on('close', () => {
       void transport.close()

@@ -61,6 +61,37 @@ describe('store', () => {
     db.reconcileChecks('old-run', undefined, db.getRun('old-run')!.state, 1_000, false)
     expect(db.checks('old-run', true)).toHaveLength(1)
     expect(db.setProjectHidden('/workspace/missing', true)).toBe(false)
+    expect(db.runRetro('old-run')).toEqual({ submitted_at: null, items: [] })
+    expect(db.createRun('/workspace/old', { title: 'New' }, 2_000).id).toBeTruthy()
+  })
+
+  it('replaces retros per run, persists them across reopen, and filters by skill, category, since and project', () => {
+    const run = db.createRun('/workspace/first', { stage: '완료' }, 1000)
+    db.syncRetroCheck(run.id, true, 1000)
+    db.syncRetroCheck(run.id, true, 1500)
+    expect(db.checks(run.id)).toMatchObject([{ task_id: '__retro__', status: 'pending', owner: null }])
+    db.replaceRetro(run.id, [{ skill: 'basic-team', skill_version: '0.1.0', category: 'other', evidence: 'old' }], 2000)
+    db.replaceRetro(run.id, [
+      { skill: 'basic-team', skill_version: '0.1.0+abc', category: 'tool_friction', evidence: 'ask timed out', suggestion: 'raise timeout' },
+      { skill: 'basic-team', skill_version: '0.1.0+abc', category: 'instruction_gap', evidence: 'Finish unclear' },
+    ], 3000)
+    db.close()
+    db = openStore(join(dir, 'store.db'))
+    expect(db.runRetro(run.id)).toEqual({ submitted_at: new Date(3000).toISOString(), items: [
+      { skill: 'basic-team', skill_version: '0.1.0+abc', category: 'tool_friction', evidence: 'ask timed out', suggestion: 'raise timeout' },
+      { skill: 'basic-team', skill_version: '0.1.0+abc', category: 'instruction_gap', evidence: 'Finish unclear' },
+    ] })
+    expect(db.checks(run.id)).toMatchObject([{ task_id: '__retro__', status: 'answered', answer: 'retro 1건' }])
+    db.syncRetroCheck(run.id, true, 4000)
+    expect(db.checks(run.id)).toHaveLength(1)
+    expect(db.retros({ category: 'tool_friction' }, 10)).toMatchObject([{ run_id: run.id, project_path: '/workspace/first', evidence: 'ask timed out' }])
+    expect(db.retros({ skill: 'other' }, 10)).toEqual([])
+    expect(db.retros({ since: new Date(3001).toISOString() }, 10)).toEqual([])
+    expect(db.retros({ project_path: '/workspace/first' }, 1)).toHaveLength(1)
+    expect(db.checkStats(run.id)).toEqual({ answered: 0, closed_unanswered: 0, avg_reply_ms: null })
+    const legacy = db.createRun('/workspace/first', { stage: '완료' }, 5000)
+    db.syncRetroCheck(legacy.id, true, 6000, false)
+    expect(db.checks(legacy.id)).toEqual([])
   })
 
   it('persists check history and task cooldown clocks across database reopen', () => {

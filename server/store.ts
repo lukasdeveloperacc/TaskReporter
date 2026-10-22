@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { STALE_MS, type AskView, type CheckView, type ProgressData, type StateSnapshot } from '../shared/contract.ts'
+import { RETRO_CATEGORIES, RETRO_TASK_ID, STALE_MS, type AskView, type CheckView, type ProgressData, type RetroItem, type RetroRow, type RunRetro, type StateSnapshot } from '../shared/contract.ts'
 
 export type RunRow = {
   id: string
@@ -13,10 +13,10 @@ export type RunRow = {
   ended_at: string | null
 }
 export type AskRow = AskView & { created_at: string }
-type StoredRun = Omit<RunRow, 'state'> & { state: string }
+type StoredRun = Omit<RunRow, 'state'> & { state: string; retro_at?: string | null }
 type StoredAsk = Omit<AskRow, 'options'> & { options: string }
 
-function runRow(row: StoredRun): RunRow {
+function runRow({ retro_at: _, ...row }: StoredRun): RunRow {
   return { ...row, state: JSON.parse(row.state) as ProgressData }
 }
 function askRow(row: StoredAsk): AskRow {
@@ -51,9 +51,18 @@ export function openStore(file: string) {
       answer TEXT, created_at TEXT NOT NULL, responded_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS checks_one_pending_task ON checks(run_id, task_id) WHERE status='pending';
+    CREATE TABLE IF NOT EXISTS retros (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), skill TEXT NOT NULL, skill_version TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN (${RETRO_CATEGORIES.map((category) => `'${category}'`).join(',')})),
+      evidence TEXT NOT NULL, suggestion TEXT, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS retros_skill_category ON retros(skill, category, created_at);
   `)
   if (!(db.prepare('PRAGMA table_info(projects)').all() as { name: string }[]).some((column) => column.name === 'hidden')) {
     db.exec('ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!(db.prepare('PRAGMA table_info(runs)').all() as { name: string }[]).some((column) => column.name === 'retro_at')) {
+    db.exec('ALTER TABLE runs ADD COLUMN retro_at TEXT')
   }
 
   return {
@@ -81,7 +90,7 @@ export function openStore(file: string) {
         id: randomUUID(), project_path: projectPath, state: structuredClone(state),
         doc_path: null, doc_baseline: null, last_report_at: new Date(now).toISOString(), ended_at: null,
       }
-      db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)')
+      db.prepare('INSERT INTO runs (id, project_path, doc_path, doc_baseline, state, last_report_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(run.id, run.project_path, null, null, JSON.stringify(state), run.last_report_at, null)
       return run
     },
@@ -215,7 +224,63 @@ export function openStore(file: string) {
         }
       }
       if (ended) {
-        db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND status='pending'").run(runId)
+        db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id<>? AND status='pending'").run(runId, RETRO_TASK_ID)
+      }
+    },
+    replaceRetro(runId: string, items: RetroItem[], now: number): void {
+      const stamp = new Date(now).toISOString()
+      const current = this.runRetro(runId)
+      const same = current.submitted_at !== null && JSON.stringify(current.items) === JSON.stringify(items.map(({ suggestion, ...item }) => (suggestion === undefined ? item : { ...item, suggestion })))
+      db.prepare("UPDATE checks SET status='answered', answer=?, responded_at=? WHERE run_id=? AND task_id=? AND status='pending'")
+        .run(`retro ${items.length}건`, stamp, runId, RETRO_TASK_ID)
+      if (same) return // a network retry keeps the original submission time
+      db.prepare('DELETE FROM retros WHERE run_id=?').run(runId)
+      const insert = db.prepare('INSERT INTO retros VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      for (const item of items) insert.run(randomUUID(), runId, item.skill, item.skill_version, item.category, item.evidence, item.suggestion ?? null, stamp)
+      db.prepare('UPDATE runs SET retro_at=? WHERE id=?').run(stamp, runId)
+    },
+    // Asks once per run for a missing retro when it ends; reopening closes the request without re-asking.
+    syncRetroCheck(runId: string, ended: boolean, now: number, justEnded = true): void {
+      if (!ended) {
+        db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, RETRO_TASK_ID)
+        return
+      }
+      if (!justEnded) return
+      const submitted = (db.prepare('SELECT retro_at FROM runs WHERE id=?').get(runId) as { retro_at: string | null }).retro_at
+      if (submitted || db.prepare('SELECT 1 FROM checks WHERE run_id=? AND task_id=?').get(runId, RETRO_TASK_ID)) return
+      db.prepare("INSERT INTO checks VALUES (?, ?, ?, NULL, ?, 'pending', NULL, ?, NULL)").run(randomUUID(), runId, RETRO_TASK_ID,
+        '회고를 보내 주세요: 스킬 지시·도구·프로세스에서 막힌 점 최대 3개를 report 최상위 retro로, 없으면 retro:[]로 보내세요(patch:{} 함께).',
+        new Date(now).toISOString())
+    },
+    runRetro(runId: string): RunRetro {
+      const run = db.prepare('SELECT retro_at FROM runs WHERE id=?').get(runId) as { retro_at: string | null } | undefined
+      const rows = db.prepare('SELECT skill, skill_version, category, evidence, suggestion FROM retros WHERE run_id=? ORDER BY rowid').all(runId) as (RetroItem & { suggestion: string | null })[]
+      return {
+        submitted_at: run?.retro_at ?? null,
+        items: rows.map(({ suggestion, ...item }) => (suggestion === null ? item : { ...item, suggestion })),
+      }
+    },
+    retros(filter: { skill?: string; category?: string; since?: string; project_path?: string }, limit: number): RetroRow[] {
+      const where: string[] = []
+      const params: string[] = []
+      if (filter.skill) { where.push('r.skill=?'); params.push(filter.skill) }
+      if (filter.category) { where.push('r.category=?'); params.push(filter.category) }
+      if (filter.since) { where.push('r.created_at>=?'); params.push(filter.since) }
+      if (filter.project_path) { where.push('runs.project_path=?'); params.push(filter.project_path) }
+      const rows = db.prepare(`SELECT r.run_id, runs.project_path, r.skill, r.skill_version, r.category, r.evidence, r.suggestion, r.created_at
+        FROM retros r JOIN runs ON runs.id=r.run_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY r.created_at DESC, r.rowid LIMIT ?`).all(...params, limit) as (RetroRow & { suggestion: string | null })[]
+      return rows.map(({ suggestion, ...row }) => (suggestion === null ? row : { ...row, suggestion }))
+    },
+    checkStats(runId: string): { answered: number; closed_unanswered: number; avg_reply_ms: number | null } {
+      const rows = db.prepare('SELECT status, created_at, responded_at FROM checks WHERE run_id=? AND task_id<>?').all(runId, RETRO_TASK_ID) as
+        { status: string; created_at: string; responded_at: string | null }[]
+      const replied = rows.filter((row) => row.status === 'answered' && row.responded_at)
+      const total = replied.reduce((sum, row) => sum + Date.parse(row.responded_at!) - Date.parse(row.created_at), 0)
+      return {
+        answered: replied.length,
+        closed_unanswered: rows.filter((row) => row.status === 'closed').length,
+        avg_reply_ms: replied.length ? Math.round(total / replied.length) : null,
       }
     },
     close(): void { db.close() },

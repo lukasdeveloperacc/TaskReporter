@@ -330,7 +330,7 @@ describe('office app', () => {
     const checkId = (first.checks as { id: string }[])[0]!.id
     const reply = { check_id: checkId, answer: 'Work is ongoing; metadata unavailable.' }
     const stopped = parseTool(await report(client, base, { run_id: runId, check_replies: [reply], patch: { stage: '중단' } }))!
-    expect(stopped.checks).toEqual([])
+    expect(stopped.checks).toMatchObject([{ task_id: '__retro__', status: 'pending' }])
     expect(db.check(checkId)).toMatchObject({ status: 'answered', answer: reply.answer, responded_at: expect.any(String) })
     const replay = await report(client, base, { run_id: runId, check_replies: [reply], patch: {} })
     expect(replay.isError).toBeFalsy()
@@ -373,9 +373,9 @@ describe('office app', () => {
     await report(client, base, { run_id: runId, check_replies: [{ check_id: checkId, answer: 'No host metadata available.' }], patch: {} })
     clock += 1
     await report(client, base, { run_id: runId, patch: { stage: '중단' } })
-    expect(db.checks(runId)).toMatchObject([{ status: 'answered' }])
+    expect(db.checks(runId)).toMatchObject([{ task_id: 'T', status: 'answered' }, { task_id: '__retro__', status: 'pending' }])
     await report(client, base, { run_id: runId, patch: { stage: '수정' } })
-    expect(db.checks(runId)).toHaveLength(1)
+    expect(db.checks(runId)).toMatchObject([{ task_id: 'T', status: 'answered' }, { task_id: '__retro__', status: 'closed' }])
     clock += 1_800_000
     const stale = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
     expect(stale.checks).toHaveLength(1)
@@ -704,6 +704,126 @@ describe('office app', () => {
     const result = await pending
     expect(result.isError).toBe(true)
     expect(((await (await fetch(`${base}/api/state`)).json()) as { asks: { status?: string }[] }).asks).toHaveLength(1)
+    await client.close()
+  })
+
+  it('accepts retro only on ended runs, including finish auto-close, and replaces it without reopening', async () => {
+    let clock = 1_800_000_000_000
+    const { base, client } = await start({ now: () => clock })
+    const runId = String(parseTool(await report(client, base, { patch: { summary: 'start' } }))!.run_id)
+    const item = { skill: 'basic-team', skill_version: '0.1.0+bb590a2', category: 'tool_friction', evidence: 'ask timed out at 리뷰', suggestion: 'raise timeout' }
+    const early = await report(client, base, { run_id: runId, patch: { summary: 'changed' }, retro: [item] })
+    expect(early.isError).toBe(true)
+    expect(early.content).toContainEqual(expect.objectContaining({ text: 'retro requires ended run' }))
+    expect(db.getRun(runId)!.state.summary).toBe('start')
+    const ended = parseTool(await report(client, base, { run_id: runId, retro: [item],
+      patch: { tasks: [{ id: 'F', lane: 'finish', status: '완료' }] } }))!
+    expect(ended.state).toMatchObject({ stage: '완료' })
+    expect(ended.checks).toEqual([])
+    expect(db.runRetro(runId).items).toEqual([item])
+    const submitted = db.runRetro(runId).submitted_at
+    clock += 5_000
+    await report(client, base, { run_id: runId, patch: {}, retro: [item] })
+    expect(db.runRetro(runId)).toEqual({ submitted_at: submitted, items: [item] })
+    expect(db.retros({}, 10)).toHaveLength(1)
+    const replaced = parseTool(await report(client, base, { run_id: runId, patch: {}, retro: [] }))!
+    expect(replaced).toMatchObject({ ended_at: ended.ended_at, state: { stage: '완료' }, checks: [] })
+    const run = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect(run.retro).toEqual({ submitted_at: expect.any(String), items: [] })
+    await client.close()
+  })
+
+  it('asks once for a missing retro, keeps the request open after the end, and settles it by retro or reply', async () => {
+    const { base, client } = await start()
+    const runId = String(parseTool(await report(client, base, { patch: { stage: '중단' } }))!.run_id)
+    const first = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    expect(first.checks).toMatchObject([{ task_id: '__retro__', owner: null, status: 'pending', question: expect.stringContaining('retro:[]') }])
+    const retroCheck = (first.checks as { id: string }[])[0]!.id
+    const endedAt = first.ended_at
+    const answered = parseTool(await report(client, base, { run_id: runId, patch: {}, retro: [] }))!
+    expect(answered).toMatchObject({ checks: [], ended_at: endedAt })
+    expect(db.check(retroCheck)).toMatchObject({ status: 'answered', answer: 'retro 0건', responded_at: expect.any(String) })
+    expect(db.runRetro(runId)).toEqual({ submitted_at: expect.any(String), items: [] })
+    await report(client, base, { run_id: runId, patch: { stage: '수정' } })
+    await report(client, base, { run_id: runId, patch: { stage: '완료' } })
+    expect(db.checks(runId)).toHaveLength(1)
+
+    const other = String(parseTool(await report(client, base, { patch: { stage: '완료' } }))!.run_id)
+    const otherCheck = db.checks(other)[0]!.id
+    await report(client, base, { run_id: other, patch: { stage: '수정' } })
+    expect(db.check(otherCheck)).toMatchObject({ status: 'closed' })
+    await report(client, base, { run_id: other, patch: { stage: '완료' } })
+    expect(db.checks(other)).toHaveLength(1)
+
+    const third = String(parseTool(await report(client, base, { patch: { stage: '중단' } }))!.run_id)
+    const thirdCheck = db.checks(third)[0]!.id
+    const replied = parseTool(await report(client, base, { run_id: third, patch: {}, check_replies: [{ check_id: thirdCheck, answer: '회고 없음: 짧은 run' }] }))!
+    expect(replied.checks).toEqual([])
+    expect(db.check(thirdCheck)).toMatchObject({ status: 'answered', answer: '회고 없음: 짧은 run' })
+    expect(db.runRetro(third).submitted_at).toBeNull()
+    await client.close()
+  })
+
+  it('validates retro items strictly and advertises retro and get_retros', async () => {
+    const { base, client } = await start()
+    const ok = { skill: 'basic-team', skill_version: '0.1.0', category: 'other', evidence: 'x' }
+    for (const retro of [
+      [ok, ok, ok, ok],
+      [{ ...ok, category: 'bug' }],
+      [{ ...ok, evidence: '  ' }],
+      [{ ...ok, extra: true }],
+      [{ ...ok, evidence: 'x'.repeat(501) }],
+      [{ ...ok, skill_version: undefined }],
+    ]) expect((await report(client, base, { patch: { stage: '완료' }, retro })).isError).toBe(true)
+    expect(db.snapshot(() => true).projects).toEqual([])
+    const { tools } = await client.listTools()
+    const retroSchema = tools.find((tool) => tool.name === 'report')!.inputSchema.properties!.retro as { maxItems: number; items: { additionalProperties: boolean } }
+    expect(retroSchema).toMatchObject({ maxItems: 3, items: { additionalProperties: false } })
+    const getRetros = tools.find((tool) => tool.name === 'get_retros')!
+    expect(getRetros.annotations?.readOnlyHint).toBe(true)
+    expect(getRetros.outputSchema?.properties).toHaveProperty('groups')
+    expect(client.getInstructions()).toContain('get_retros')
+    expect((await client.callTool({ name: 'get_retros', arguments: { since: 'Oct 1 2026' } })).isError).toBe(true)
+    expect((await client.callTool({ name: 'get_retros', arguments: { project_path: 'relative' } })).isError).toBe(true)
+    const reserved = await report(client, base, { patch: { tasks: [{ id: '__retro__' }] } })
+    expect(reserved.content).toContainEqual(expect.objectContaining({ text: 'task id __retro__ is reserved' }))
+    await client.close()
+  })
+
+  it('groups retros by skill and category with candidates, signals and filters without writes', async () => {
+    let clock = 1_800_000_000_000
+    const { base, client } = await start({ now: () => clock })
+    const entry = (category: string, evidence: string, version = '0.1.0+aaa') => ({ skill: 'basic-team', skill_version: version, category, evidence })
+    const first = String(parseTool(await report(client, base, { patch: {
+      tasks: [{ id: 'T', status: '진행중', model: 'm', effort: 'high' }],
+      reviews: [{ round: 1, reviewer: 'Karpathy Agent' }, { round: 2, reviewer: 'Karpathy Agent' }],
+    } }))!.run_id)
+    clock += 1_800_000
+    const stale = parseTool(await report(client, base, { run_id: first, patch: {} }))!
+    clock += 60_000
+    await report(client, base, { run_id: first, check_replies: [{ check_id: (stale.checks as { id: string }[])[0]!.id, answer: 'still working' }], patch: {} })
+    await report(client, base, { run_id: first, patch: { stage: '완료', tasks: [{ id: 'T', status: '완료' }] }, retro: [entry('tool_friction', 'ask timeout'), entry('other', 'misc')] })
+    clock += 1_000
+    const since = new Date(clock).toISOString()
+    const second = String(parseTool(await report(client, base, { patch: { stage: '중단' }, retro: [entry('tool_friction', 'ask timeout again', '0.1.0+bbb')] }))!.run_id)
+    const before = db.snapshot(() => false)
+    const all = parseTool(await client.callTool({ name: 'get_retros', arguments: {} }))!
+    expect(all.truncated).toBe(false)
+    expect(all.groups).toMatchObject([
+      { skill: 'basic-team', category: 'tool_friction', run_count: 2, candidate: true, skill_versions: ['0.1.0+bbb', '0.1.0+aaa'],
+        items: [{ run_id: second, evidence: 'ask timeout again' }, { run_id: first, evidence: 'ask timeout' }] },
+      { category: 'other', run_count: 1, candidate: false },
+    ])
+    expect(all.signals).toEqual(expect.arrayContaining([
+      { run_id: first, project_path: join(workspace, 'project'), stage: '완료', ended_at: expect.any(String), review_rounds: 2,
+        checks_answered: 1, checks_closed_unanswered: 0, avg_check_reply_ms: 60_000 },
+      expect.objectContaining({ run_id: second, stage: '중단', review_rounds: 0, checks_answered: 0 }),
+    ]))
+    const recent = parseTool(await client.callTool({ name: 'get_retros', arguments: { since, category: 'tool_friction' } }))!
+    expect(recent.groups).toMatchObject([{ run_count: 1, candidate: false, items: [{ run_id: second }] }])
+    const elsewhere = parseTool(await client.callTool({ name: 'get_retros', arguments: { project_path: join(workspace, 'none') } }))!
+    expect(elsewhere).toEqual({ groups: [], signals: [], truncated: false })
+    expect(db.snapshot(() => false)).toEqual(before)
     await client.close()
   })
 

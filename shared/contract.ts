@@ -8,6 +8,8 @@ export const STATUSES = ['대기중', '진행중', '완료', '중단'] as const
 export const CLOSED = ['완료', '중단'] as const
 export const REVIEWERS = ['Karpathy Agent', 'Ponytail Agent', 'Impeccable Agent', 'E2E Agent'] as const
 export const SSE_EVENTS = { changed: 'changed', docChanged: 'doc-changed' } as const
+export const RETRO_CATEGORIES = ['instruction_gap', 'tool_friction', 'user_correction', 'review_miss', 'other'] as const
+export const RETRO_TASK_ID = '__retro__'
 
 export type Stage = (typeof STAGES)[number]
 export type Lane = (typeof LANES)[number]
@@ -25,6 +27,17 @@ export type CheckView = {
   created_at: string
   responded_at: string | null
 }
+
+export type RetroCategory = (typeof RETRO_CATEGORIES)[number]
+export type RetroItem = {
+  skill: string
+  skill_version: string
+  category: RetroCategory
+  evidence: string
+  suggestion?: string
+}
+export type RetroRow = RetroItem & { run_id: string; project_path: string; created_at: string }
+export type RunRetro = { submitted_at: string | null; items: RetroItem[] }
 
 export type Todo = {
   id: string
@@ -117,6 +130,7 @@ export type ReportArgs = {
   close_ask_ids?: string[]
   include_state?: boolean
   check_replies?: { check_id: string; answer: string }[]
+  retro?: RetroItem[]
 }
 
 export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[] }
