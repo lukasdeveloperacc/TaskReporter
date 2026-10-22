@@ -822,8 +822,20 @@ describe('office app', () => {
     const recent = parseTool(await client.callTool({ name: 'get_retros', arguments: { since, category: 'tool_friction' } }))!
     expect(recent.groups).toMatchObject([{ run_count: 1, candidate: false, items: [{ run_id: second }] }])
     const elsewhere = parseTool(await client.callTool({ name: 'get_retros', arguments: { project_path: join(workspace, 'none') } }))!
-    expect(elsewhere).toEqual({ groups: [], signals: [], truncated: false })
+    expect(elsewhere).toEqual({ groups: [], signals: [], truncated: false,
+      submission: { ended_runs: 0, submitted: 0, empty: 0, missing: 0, recent_missing: [] } })
     expect(db.snapshot(() => false)).toEqual(before)
+    clock += 1_000
+    const skipped = String(parseTool(await report(client, base, { patch: { stage: '완료' } }))!.run_id)
+    clock += 1_000
+    await report(client, base, { patch: { stage: '중단' }, retro: [] })
+    await report(client, base, { patch: { summary: 'still open' } })
+    const rate = parseTool(await client.callTool({ name: 'get_retros', arguments: { skill: 'nobody' } }))!
+    expect(rate.groups).toEqual([])
+    expect(rate.submission).toEqual({ ended_runs: 4, submitted: 3, empty: 1, missing: 1,
+      recent_missing: [{ run_id: skipped, project_path: join(workspace, 'project'), ended_at: expect.any(String) }] })
+    const later = parseTool(await client.callTool({ name: 'get_retros', arguments: { since: new Date(clock).toISOString() } }))!
+    expect(later.submission).toMatchObject({ ended_runs: 1, submitted: 1, empty: 1, missing: 0 })
     await client.close()
   })
 

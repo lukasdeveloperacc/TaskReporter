@@ -38,6 +38,13 @@ export type RetroItem = {
 }
 export type RetroRow = RetroItem & { run_id: string; project_path: string; created_at: string }
 export type RunRetro = { submitted_at: string | null; items: RetroItem[] }
+export type RetroSubmission = {
+  ended_runs: number
+  submitted: number
+  empty: number
+  missing: number
+  recent_missing: { run_id: string; project_path: string; ended_at: string }[]
+}
 
 export type Todo = {
   id: string

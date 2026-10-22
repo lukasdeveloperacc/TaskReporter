@@ -37,7 +37,7 @@ docker compose logs -f office
 
 ### run 회고
 
-run을 끝내는 `report`(또는 종료된 run에 `patch:{}`와 함께)에 최상위 `retro`로 스킬 지시·도구·프로세스에서 막힌 점을 최대 3개 보냅니다. 예: `"retro":[{"skill":"basic-team","skill_version":"0.1.0+bb590a2","category":"tool_friction","evidence":"리뷰 단계 ask가 MCP 타임아웃으로 끊김","suggestion":"MCP_TOOL_TIMEOUT 안내를 Finish 절에 추가"}]`. 없으면 `"retro":[]`를 보냅니다. 빠뜨리면 `checks`에 `task_id:"__retro__"` 요청이 한 번 옵니다. 읽기 전용 `get_retros({skill?,category?,since?,project_path?})`는 skill+category별 묶음과 서버 계산 신호를 돌려주며, 서로 다른 run에서 반복된 묶음을 `candidate:true`로 표시합니다. 자세한 계약은 [결재·실행 요구사항](docs/requirements/decisions-integration.md#run-회고)에 있습니다.
+run을 끝내는 `report`(또는 종료된 run에 `patch:{}`와 함께)에 최상위 `retro`로 스킬 지시·도구·프로세스에서 막힌 점을 최대 3개 보냅니다. 예: `"retro":[{"skill":"basic-team","skill_version":"0.1.0+bb590a2","category":"tool_friction","evidence":"리뷰 단계 ask가 MCP 타임아웃으로 끊김","suggestion":"MCP_TOOL_TIMEOUT 안내를 Finish 절에 추가"}]`. 없으면 `"retro":[]`를 보냅니다. 빠뜨리면 `checks`에 `task_id:"__retro__"` 요청이 한 번 옵니다. 읽기 전용 `get_retros({skill?,category?,since?,project_path?})`는 skill+category별 묶음과 서버 계산 신호를 돌려주며, 서로 다른 run에서 반복된 묶음을 `candidate:true`로 표시합니다. `submission`은 종료된 run 중 회고 제출·빈 제출·미제출 수와 최근 미제출 run을 보여 주며, 배포 이후만 보려면 `since`를 씁니다. 자세한 계약은 [결재·실행 요구사항](docs/requirements/decisions-integration.md#run-회고)에 있습니다.
 
 ### 에이전트 체크인
 

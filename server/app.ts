@@ -26,6 +26,7 @@ export type CreateAppOptions = {
 
 const ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
 const RETRO_LIMIT = 200
+const RECENT_MISSING_LIMIT = 20
 
 function originAllowed(origin: string, req: Request, devOrigin?: string): boolean {
   try {
@@ -353,14 +354,19 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     })).describe('skill+category 묶음; candidate 우선, run_count·last_at 내림차순'),
     signals: z.array(z.unknown()).describe('회고가 있는 run별 서버 계산 신호'),
     truncated: z.boolean().describe(`최근 ${RETRO_LIMIT}개 회고 행으로 잘렸는지`),
+    submission: z.object({
+      ended_runs: z.number(), submitted: z.number(), empty: z.number(), missing: z.number(),
+      recent_missing: z.array(z.object({ run_id: z.string(), project_path: z.string(), ended_at: z.string() })),
+    }).describe(`종료된 run의 회고 제출 현황; since(ended_at 기준)·project_path만 적용, skill·category는 무시. empty는 retro:[] 제출, recent_missing은 최근 미제출 ${RECENT_MISSING_LIMIT}개`),
   })
 
   const getRetros = (args: z.infer<typeof getRetrosSchema>) => {
-    const rows = db.retros({
+    const filter = {
       ...args,
       since: args.since && new Date(args.since).toISOString(),
       project_path: args.project_path && resolve(args.project_path),
-    }, RETRO_LIMIT + 1)
+    }
+    const rows = db.retros(filter, RETRO_LIMIT + 1)
     const truncated = rows.length > RETRO_LIMIT
     const kept = rows.slice(0, RETRO_LIMIT)
     const grouped = new Map<string, typeof kept>()
@@ -386,7 +392,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         checks_answered: stats.answered, checks_closed_unanswered: stats.closed_unanswered, avg_check_reply_ms: stats.avg_reply_ms,
       }
     })
-    return { groups, signals, truncated }
+    return { groups, signals, truncated, submission: db.retroSubmission(filter, RECENT_MISSING_LIMIT) }
   }
 
   app.post('/mcp', async (req, res) => {
@@ -410,7 +416,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       })
     })
     server.registerTool('get_retros', {
-      description: 'Read run retros grouped by skill+category with per-run signals, without changing state; candidate=true when 2+ distinct runs repeat it. Use since to separate before/after a skill fix.',
+      description: 'Read run retros grouped by skill+category with per-run signals and the retro submission rate of ended runs, without changing state; candidate=true when 2+ distinct runs repeat it. Use since to separate before/after a skill fix.',
       inputSchema: getRetrosSchema,
       outputSchema: getRetrosOutputSchema,
       annotations: { readOnlyHint: true },

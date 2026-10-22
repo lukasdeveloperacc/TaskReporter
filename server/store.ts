@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { RETRO_CATEGORIES, RETRO_TASK_ID, STALE_MS, type AskView, type CheckView, type ProgressData, type RetroItem, type RetroRow, type RunRetro, type StateSnapshot } from '../shared/contract.ts'
+import { RETRO_CATEGORIES, RETRO_TASK_ID, STALE_MS, type AskView, type CheckView, type ProgressData, type RetroItem, type RetroRow, type RetroSubmission, type RunRetro, type StateSnapshot } from '../shared/contract.ts'
 
 export type RunRow = {
   id: string
@@ -271,6 +271,24 @@ export function openStore(file: string) {
         FROM retros r JOIN runs ON runs.id=r.run_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
         ORDER BY r.created_at DESC, r.rowid LIMIT ?`).all(...params, limit) as (RetroRow & { suggestion: string | null })[]
       return rows.map(({ suggestion, ...row }) => (suggestion === null ? row : { ...row, suggestion }))
+    },
+    // Missing runs carry no skill, so this ignores skill/category filters.
+    retroSubmission(filter: { since?: string; project_path?: string }, missingLimit: number): RetroSubmission {
+      const where = ['ended_at IS NOT NULL']
+      const params: string[] = []
+      if (filter.since) { where.push('ended_at>=?'); params.push(filter.since) }
+      if (filter.project_path) { where.push('project_path=?'); params.push(filter.project_path) }
+      const clause = where.join(' AND ')
+      const counts = db.prepare(`SELECT COUNT(*) AS ended_runs, COALESCE(SUM(retro_at IS NOT NULL), 0) AS submitted,
+        COALESCE(SUM(retro_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM retros WHERE retros.run_id=runs.id)), 0) AS empty
+        FROM runs WHERE ${clause}`).get(...params) as { ended_runs: number; submitted: number; empty: number }
+      const missing = db.prepare(`SELECT id, project_path, ended_at FROM runs WHERE ${clause} AND retro_at IS NULL
+        ORDER BY ended_at DESC, id LIMIT ?`).all(...params, missingLimit) as { id: string; project_path: string; ended_at: string }[]
+      return {
+        ended_runs: counts.ended_runs, submitted: counts.submitted, empty: counts.empty,
+        missing: counts.ended_runs - counts.submitted,
+        recent_missing: missing.map(({ id, ...run }) => ({ run_id: id, ...run })),
+      }
     },
     checkStats(runId: string): { answered: number; closed_unanswered: number; avg_reply_ms: number | null } {
       const rows = db.prepare('SELECT status, created_at, responded_at FROM checks WHERE run_id=? AND task_id<>?').all(runId, RETRO_TASK_ID) as

@@ -16,6 +16,7 @@ report의 선택 입력 include_state는 boolean이다. false면 응답 state만
 - patch 병합 후 run이 종료 상태(finish task 자동 종료 포함)일 때만 받는다. 아니면 `retro requires ended run` 오류이며 report 전체가 롤백된다. 종료된 run에는 `patch:{}`와 retro만 보낼 수 있고 재개되지 않으며 ended_at도 유지한다. 다시 보내면 run 단위로 교체하고, 같은 내용 재전송은 최초 제출 시각을 유지한다. `[]`는 회고 없음 제출이다. 작업 id `__retro__`는 예약어로 거부한다.
 - 회고 없이 run을 끝내는 report에서만(이미 끝난 기존 run의 이후 report에서는 아님) 그 run에 `task_id:"__retro__"`, owner null인 체크를 한 번만 만든다. 이 체크는 종료 정리에서 닫히지 않는다. retro 제출 시 `retro <n>건`으로 answered가 되고, check_replies 텍스트 답도 받는다. run이 재개되면 닫히며 다시 만들지 않는다. 답하지 않아도 완료를 막지 않는다.
 - `get_run.retro`는 `{submitted_at, items}`다. 읽기 전용 `get_retros({skill?, category?, since?, project_path?})`는 최근 200행 기준으로 skill+category 묶음(`run_count`, `skill_versions`, `last_at`, 서로 다른 run이 2개 이상이면 `candidate:true`)과 run별 서버 신호(stage, ended_at, 최대 review round, `__retro__`를 제외한 체크 answered·미응답 closed 수·평균 응답 ms), `truncated`를 반환한다. since(시간대가 있는 ISO date-time)로 스킬 수정 전후를 나누며 project_path는 절대 경로여야 한다. 200행 제한에서 한 run의 항목이 잘릴 수 있고 이때 truncated가 true다. ask 대기 시간은 답변 시각을 저장하지 않아 제공하지 않는다.
+- `get_retros.submission`은 종료된 run의 회고 제출 현황이다: `ended_runs`, `submitted`(retro_at 있음), 그중 `empty`(`retro:[]`), `missing`, 최근 미제출 20개 `recent_missing[{run_id, project_path, ended_at}]`. 미제출 run에는 스킬 정보가 없으므로 skill·category 필터는 적용하지 않고 since(ended_at 기준)·project_path만 적용한다. 기능 배포 전에 끝난 run도 미제출로 세므로 since로 배포 이후를 본다. 회고 강제(미제출 시 완료 거부)는 이 수치를 보고 결정한다([변경 018](../changes/018-retro-submission-rate.md)).
 - 스킬은 `report.inputSchema.properties.retro`로 지원을 확인한다.
 
 ## ask 계약
