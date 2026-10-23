@@ -158,7 +158,7 @@ describe('real Office visitor staff inspection', () => {
     expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
   })
 
-  it('lets J open nearby staff history at an exit and prevents a repeated Enter on the door button', async () => {
+  it('lets J open nearby staff history at an exit and ignores repeated Enter on the map', async () => {
     const run = makeRun([
       activeBackendTask(),
       activeBackendTask({ id: 'BACKEND-2', owner: 'backend-2' }),
@@ -171,10 +171,7 @@ describe('real Office visitor staff inspection', () => {
     const exitThreshold = { x: 264, y: 696 }
     moveAlong(map, findRoute(VISITOR_SPAWN, exitThreshold))
     await waitFor(() => expect(characterFoot()).toEqual(exitThreshold))
-    const doorButton = screen.getByRole('button', { name: /퇴장 · 백엔드팀/ })
-    const repeatedEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })
-    doorButton.dispatchEvent(repeatedEnter)
-    expect(repeatedEnter.defaultPrevented).toBe(true)
+    fireEvent.keyDown(map, { key: 'Enter', code: 'Enter', repeat: true })
     expect(characterFoot()).toEqual(exitThreshold)
 
     fireEvent.keyDown(map, { key: 'j', code: 'KeyJ' })
@@ -230,7 +227,7 @@ describe('real Office visitor staff inspection', () => {
     expect(document.querySelector('[data-employee="backend-1"]')).toBeNull()
 
     fireEvent.click(withinInspectorButton())
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     const updatedRoute = findRoute(characterFoot(), newPoint)
     moveAlong(map, updatedRoute)
     await waitFor(() => expect(characterFoot()).toEqual(newPoint))
@@ -290,7 +287,7 @@ describe('real Office visitor staff inspection', () => {
     fireEvent.keyDown(screen.getByRole('tab', { name: '현재 업무' }), { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     const beforeCloseMovement = characterFoot()
     fireEvent.keyDown(map, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(characterFoot()).not.toEqual(beforeCloseMovement)
@@ -411,7 +408,7 @@ describe('clicking staff to inspect work', () => {
     const visiting = mode.includes('visitor')
     if (visiting) fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
     if (mode.includes('overview')) fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
-    if (mode.startsWith('paused')) fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    if (mode.startsWith('paused')) fireEvent.keyDown(screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' }), { key: ' ', code: 'Space' })
     const employee = screen.getByRole('button', { name: 'backend-1 현재 업무 보기' })
     const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
     for (const target of ['.office-person', '.office-bubble']) {
@@ -429,7 +426,7 @@ describe('clicking staff to inspect work', () => {
       expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
       await waitFor(() => expect(document.activeElement).toBe(visiting ? map : employee))
     }
-    if (mode.startsWith('paused')) expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    if (mode.startsWith('paused')) expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('blocks staff clicks during an external dialog and after the run ends', () => {
@@ -468,6 +465,27 @@ describe('walking to clicked staff', () => {
     advance(950)
     expect(roomKeyAt(characterFoot(), roomGeometry(roles.departments))).toBe('프론트엔드팀')
     expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('frontend-1 업무')
+  })
+
+  it('continues an active walk from the remapped visitor position after the layout grows', () => {
+    const run = makeRun([activeBackendTask()])
+    const { rerender } = render(<Office run={run} asks={[]} now={now} onOpenAsk={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    advance(200)
+    const beforeGrowth = characterFoot()
+    const plans = Array.from({ length: 12 }, (_, index) => activeBackendTask({ id: `P-${index}`, owner: `plan-${index}`, lane: 'plan' }))
+    rerender(<Office run={makeRun([activeBackendTask(), ...plans])} asks={[]} now={now} onOpenAsk={() => {}} />)
+    const remapped = characterFoot()
+    expect(remapped.y).toBeGreaterThan(beforeGrowth.y)
+    advance(48)
+    const next = characterFoot()
+    expect(Math.hypot(next.x - remapped.x, next.y - remapped.y)).toBeLessThanOrEqual(96)
+    advance(1000)
+    const backend = screen.getByRole('region', { name: '백엔드팀' }) as HTMLElement
+    expect(characterFoot().y).toBeGreaterThan(Number.parseFloat(backend.style.top))
+    expect(characterFoot().y).toBeLessThan(Number.parseFloat(backend.style.top) + Number.parseFloat(backend.style.height))
+    expect(screen.getByRole('dialog', { name: '직원 업무 살펴보기' }).textContent).toContain('backend-1 업무')
   })
 
   it('walks to the elevator before opening one picker, ignoring repeated elevator clicks', () => {
@@ -657,12 +675,12 @@ describe('walking to selected rooms', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '백엔드팀 방으로 이동' }))
     expect(screen.getByText('백엔드팀 방으로 이동 중…')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    fireEvent.keyDown(screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' }), { key: ' ', code: 'Space' })
     expect(screen.queryByText(/방으로 이동 중/)).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /^회의실$/ }))
     expect(screen.getByText('회의실 방으로 이동 중…')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     advance(1000)
     expect(roomKeyAt(characterFoot(), geometry)).toBe('회의실')
     fireEvent.click(screen.getByRole('button', { name: '백엔드팀 방으로 이동' }))

@@ -1,12 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import roles from './roles.json' with { type: 'json' }
-import { OFFICE_HEIGHT, OFFICE_WIDTH } from './office.ts'
+import { layoutOffice, OFFICE_HEIGHT, OFFICE_WIDTH, seatPosition, type EmployeeView } from './office.ts'
 import { ELEVATOR_RECT, INTERACTION_RADIUS, moveVisitor, nearestInteraction, roomGeometry, VISITOR_SPAWN, visitorSpriteBounds, type Direction, type Point } from './visitor.ts'
+import { findVisitorPath, roomKeyAt } from './roomNavigation.ts'
 
 const geometry = roomGeometry(roles.departments)
 const directions: Direction[] = ['up', 'down', 'left', 'right']
 
 describe('visitor geometry', () => {
+  it('expands map bounds and keeps routes to all seats when every department grows', () => {
+    const employees: EmployeeView[] = roles.departments.flatMap(({ key: department }) => Array.from({ length: 9 }, (_, deskIndex) => ({
+      name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle',
+    })))
+    const layout = layoutOffice(employees)
+    const expanded = roomGeometry(layout)
+    expect(expanded.width).toBe(OFFICE_WIDTH)
+    expect(expanded.height).toBe(Math.max(...layout.map(({ y, h }) => (y + h) * 48)) + 64)
+    expect(expanded.height).toBeGreaterThan(OFFICE_HEIGHT)
+    const spawn = { ...VISITOR_SPAWN, y: VISITOR_SPAWN.y + expanded.height - OFFICE_HEIGHT }
+    for (const department of layout) {
+      const seat = seatPosition(department, 8)
+      const target = { x: seat.x * 48, y: (seat.y + 1) * 48 }
+      const path = findVisitorPath(spawn, target, expanded)
+      expect(path, `${department.name} last seat should be reachable`).not.toBeNull()
+      expect(roomKeyAt(path!.at(-1)!, expanded)).toBe(department.key)
+    }
+  })
+
   it('uses the foot point and keeps sprite and elevator geometry inside the map', () => {
     expect(visitorSpriteBounds(VISITOR_SPAWN)).toEqual({ left: 142, top: 1392, width: 52, height: 65 })
     expect(geometry.rooms.every((room) => ELEVATOR_RECT.x + ELEVATOR_RECT.width <= room.x || ELEVATOR_RECT.x >= room.x + room.width || ELEVATOR_RECT.y + ELEVATOR_RECT.height <= room.y || ELEVATOR_RECT.y >= room.y + room.height)).toBe(true)

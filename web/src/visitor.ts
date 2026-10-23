@@ -47,7 +47,7 @@ export function roomGeometry(departments: DepartmentLayout[]): RoomGeometry {
       { from: { x: door.to.x, y: y + height }, to: { x: x + width, y: y + height } },
     )
   }
-  return { rooms, walls, width: OFFICE_WIDTH, height: OFFICE_HEIGHT }
+  return { rooms, walls, width: OFFICE_WIDTH, height: Math.max(OFFICE_HEIGHT, ...rooms.map((room) => room.y + room.height + 64)) }
 }
 
 function crossesWall(from: Point, to: Point, wall: Segment): boolean {

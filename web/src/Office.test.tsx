@@ -80,7 +80,7 @@ describe('Office scene controls and coordinates', () => {
     expect(screen.queryByLabelText('이동 중인 서류')).toBeNull()
   })
 
-  it('fits the single office map to both viewport dimensions and closes with Escape', () => {
+  it('keeps the full office at readable size for scrolling and closes with Escape', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     render(<StaticOffice run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
@@ -91,12 +91,11 @@ describe('Office scene controls and coordinates', () => {
     expect(document.body.style.overflow).toBe('hidden')
     expect(document.activeElement).toBe(toggle)
     const stage = document.querySelector('.office-map-stage') as HTMLElement
-    const toolbarHeight = document.querySelector('.office-department-nav')!.getBoundingClientRect().height
     const scale = Number(stage.dataset.fitScale)
-    expect(scale).toBeLessThan(900 / 1600)
-    expect(Number.parseFloat(stage.style.width)).toBeCloseTo(1536 * scale)
-    expect(Number.parseFloat(stage.style.height)).toBeCloseTo(1600 * scale)
-    expect(Number.parseFloat(stage.style.height)).toBeLessThanOrEqual(900 - toolbarHeight)
+    expect(scale).toBe(1)
+    expect(Number.parseFloat(stage.style.width)).toBe(1536)
+    expect(Number.parseFloat(stage.style.height)).toBe(1600)
+    expect(Number.parseFloat(stage.style.height)).toBeGreaterThan(window.innerHeight)
     fireEvent.keyDown(toggle, { key: 'Tab', shiftKey: true })
     const lastStaffCard = document.querySelectorAll('.office-employee').item(document.querySelectorAll('.office-employee').length - 1)
     expect(document.activeElement).toBe(lastStaffCard)
@@ -105,7 +104,7 @@ describe('Office scene controls and coordinates', () => {
 
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1200 })
     fireEvent(window, new Event('resize'))
-    expect(Number(stage.dataset.fitScale)).toBeGreaterThan(scale)
+    expect(Number(stage.dataset.fitScale)).toBe(scale)
     const departmentButton = screen.getByRole('button', { name: 'QA팀' })
     departmentButton.focus()
     fireEvent.keyDown(departmentButton, { key: 'Escape' })
@@ -158,39 +157,31 @@ describe('Office scene controls and coordinates', () => {
     stylesheet.remove()
   })
 
-  it('shows reported model IDs for idle staff and marks missing active-task models honestly', () => {
+  it('keeps idle and active summaries compact without repeating report metadata', () => {
     const run = makeRun([
       { id: 'C', owner: 'backend-1', lane: 'build', status: '완료', title: '완료한 Claude 작업', model: 'claude-3-7-sonnet-20250219', effort: 'high' },
-      { id: 'X', owner: 'backend-2', lane: 'build', status: '완료', title: '완료한 Codex 작업', effort: 'low' },
-      { id: 'Y', owner: 'frontend-1', lane: 'build', status: '완료', title: '완료한 익숙하지 않은 모델 작업', model: 'gpt-5.3-codex' },
-      { id: 'M', owner: 'docs-1', lane: 'docs', status: '완료', title: 'metadata missing' },
       { id: 'N', owner: 'designer-1', lane: 'build', status: '진행중', title: '현재 진행 작업' },
     ])
     render(<StaticOffice run={run} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
-    const claudeCard = document.querySelector('[data-employee="backend-1"] .office-bubble')!
-    const effortOnlyCard = document.querySelector('[data-employee="backend-2"] .office-bubble')!
-    const modelOnlyCard = document.querySelector('[data-employee="frontend-1"] .office-bubble')!
-    const missingCard = document.querySelector('[data-employee="docs-1"] .office-bubble')!
-    const activeCard = document.querySelector('[data-employee="designer-1"] .office-bubble')!
-    expect(claudeCard.textContent).toContain('모델 · claude-3-7-sonnet-20250219')
-    expect(claudeCard.textContent).toContain('노력 · high')
-    expect(effortOnlyCard.textContent).toContain('모델 · 미보고')
-    expect(effortOnlyCard.textContent).toContain('노력 · low')
-    expect(modelOnlyCard.textContent).toContain('모델 · gpt-5.3-codex')
-    expect(modelOnlyCard.textContent).toContain('노력 · 미보고')
-    expect(missingCard.textContent).toContain('모델 · 미보고')
-    expect(missingCard.textContent).toContain('노력 · 미보고')
-    expect(activeCard.textContent).toContain('모델 · 미보고')
-    expect(activeCard.textContent).toContain('노력 · 미보고')
+    const idle = document.querySelector('[data-employee="backend-1"] .office-bubble')!
+    const active = document.querySelector('[data-employee="designer-1"] .office-bubble')!
+    expect(idle.querySelector('.office-name')?.textContent).toBe('backend-1')
+    expect(idle.textContent).toContain('대기')
+    expect(active.textContent).toContain('작업 중')
+    for (const bubble of [idle, active]) {
+      expect(bubble.textContent).not.toContain('모델')
+      expect(bubble.textContent).not.toContain('노력')
+      expect(bubble.querySelector('.office-task-title')).toBeNull()
+    }
   })
 
-  it('shows model and effort on a stale active task marked away', () => {
+  it('keeps the away state visible while report metadata stays in the detail view', () => {
     const stale = makeRun([{ id: 'STALE', owner: 'backend-1', lane: 'build', status: '진행중', title: '중단된 작업', model: 'gpt-5.3-codex', effort: 'high' }], { last_report_at: '2026-10-19T11:00:00.000Z' })
     render(<StaticOffice run={stale} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     const employee = document.querySelector('[data-employee="backend-1"]')!
     expect(employee.getAttribute('data-state')).toBe('away')
-    expect(employee.querySelector('.office-bubble')?.textContent).toContain('모델 · gpt-5.3-codex')
-    expect(employee.querySelector('.office-bubble')?.textContent).toContain('노력 · high')
+    expect(employee.querySelector('.office-bubble')?.textContent).not.toContain('모델')
+    expect(employee.querySelector('.office-bubble')?.textContent).not.toContain('노력')
     expect(employee.querySelector('.office-bubble')?.textContent).toContain('자리 비움')
   })
 
@@ -294,7 +285,7 @@ describe('Office scene controls and coordinates', () => {
     }
     expect(Math.hypot(foot().x - elevatorPoint.x, foot().y - elevatorPoint.y)).toBeLessThanOrEqual(24)
 
-    fireEvent.click(screen.getByRole('button', { name: '살펴보기' }))
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
     const picker = screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /other/ })))
     fireEvent.keyDown(picker, { key: 'Escape' })
@@ -384,7 +375,7 @@ describe('Office scene controls and coordinates', () => {
     fireEvent.keyDown(lobby, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
     const before = avatar.style.top
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
@@ -423,17 +414,17 @@ describe('Office scene controls and coordinates', () => {
     fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
     expect(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '닫기' }))
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
     const before = avatar.style.top
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).not.toBe(before)
     const walking = avatar.style.top
-    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
-    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).toBe(walking)
-    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).not.toBe(walking)
   })
@@ -518,7 +509,7 @@ describe('Office scene controls and coordinates', () => {
     expect(css).toMatch(/\.office-scroll--visitor\s*\{[^}]*transition:\s*none;/)
   })
 
-  it('keeps the fitted overview walkable and guards its panels, pause controls, and approval focus', async () => {
+  it('keeps the scrollable overview walkable and guards its panels, pause controls, and approval focus', async () => {
     const scrollTo = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
     const { rerender } = render(<><button type="button">Approval dialog</button><StaticOffice run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
@@ -531,7 +522,7 @@ describe('Office scene controls and coordinates', () => {
     fireEvent(window, new Event('resize'))
     expect(scrollTo).not.toHaveBeenCalled()
     expect(document.querySelector('.visitor-controls')).not.toBeNull()
-    expect(Number((document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale)).toBeCloseTo(700 / 1600)
+    expect(Number((document.querySelector('.office-map-stage') as HTMLElement).dataset.fitScale)).toBe(1)
     const avatar = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
     const before = avatar.style.top
     await waitFor(() => expect(document.activeElement).toBe(floor))
@@ -546,14 +537,14 @@ describe('Office scene controls and coordinates', () => {
     fireEvent.keyDown(screen.getByRole('dialog', { name: '다른 프로젝트 층 선택' }), { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '다른 프로젝트 층 선택' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '관제실 확인 사무실' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     await waitFor(() => expect(document.activeElement).toBe(floor))
     fireEvent.keyDown(floor, { key: 'ArrowUp', code: 'ArrowUp' })
     expect(avatar.style.top).not.toBe(walked)
     fireEvent.keyDown(floor, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '관제실 확인 사무실' })).toBeNull()
     expect(screen.getByRole('button', { name: '전체 보기' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '잠시 멈춤' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
     const moved = avatar.style.top
 
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
@@ -563,11 +554,11 @@ describe('Office scene controls and coordinates', () => {
     expect(screen.queryByRole('dialog', { name: '관제실 확인 사무실' })).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Approval dialog' }))
     rerender(<><button type="button">Approval dialog</button><StaticOffice run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} visitorEnabled /></>)
-    expect(screen.getByRole('button', { name: '둘러보기 재개' })).toBeTruthy()
+    expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(true)
     expect(avatar.style.top).toBe(moved)
   })
 
-  it('uses Space/F inside an open overview without moving the fitted camera', async () => {
+  it('uses Space/F inside an open overview without moving the overview camera', async () => {
     const scrollTo = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
     render(<Office run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
@@ -609,11 +600,11 @@ describe('Office scene controls and coordinates', () => {
     scrollTo.mockClear()
     fireEvent(window, new Event('resize'))
     expect(scrollTo).toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '잠시 멈춤' }))
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
     scrollTo.mockClear()
     fireEvent(window, new Event('resize'))
     expect(scrollTo).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '둘러보기 재개' }))
+    fireEvent.keyDown(floor, { key: ' ', code: 'Space' })
     fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
     scrollTo.mockClear()
     fireEvent(window, new Event('resize'))
@@ -626,7 +617,94 @@ describe('Office scene controls and coordinates', () => {
 })
 
 describe('simultaneous worker layout', () => {
-  it('keeps long task and rank bubbles readable for adjacent same-team employees', () => {
+  it('shows every planning employee inside an expanded room and opens the last employee report', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    const tasks = Array.from({ length: 12 }, (_, index) => task(`P-${index}`, `plan-${index}`, 'plan', '진행중'))
+    render(<Office run={makeRun(tasks)} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+
+    const room = screen.getByRole('region', { name: '회의실', exact: true }) as HTMLElement
+    const roomTop = Number.parseFloat(room.style.top)
+    const roomBottom = roomTop + Number.parseFloat(room.style.height)
+    expect(Number.parseFloat(room.style.height)).toBeGreaterThan(288)
+    for (const task of tasks) {
+      const employee = screen.getByRole('button', { name: `${task.owner} 현재 업무 보기` }) as HTMLElement
+      expect(Number.parseFloat(employee.style.top)).toBeGreaterThan(roomTop)
+      expect(Number.parseFloat(employee.style.top) + 65).toBeLessThan(roomBottom)
+    }
+    const backend = screen.getByRole('region', { name: '백엔드팀', exact: true }) as HTMLElement
+    expect(Number.parseFloat(backend.style.top)).toBeGreaterThanOrEqual(roomBottom + 48)
+    const stage = document.querySelector('.office-map-stage') as HTMLElement
+    expect(Number.parseFloat(stage.style.height)).toBeGreaterThan(1600)
+    const minimapRoom = document.querySelector('.room-minimap [data-room-key="회의실"] rect')!
+    expect(Number(minimapRoom.getAttribute('height'))).toBe(Number.parseFloat(room.style.height))
+    expect(screen.queryByRole('button', { name: /^살펴보기/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '잠시 멈춤' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '둘러보기 재개' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'plan-11 현재 업무 보기' }))
+    const report = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
+    expect(report.textContent).toContain('plan-11 업무')
+    expect(report.textContent).toContain('작업 · plan-11 작업')
+  })
+
+  it('keeps the visitor inside the same room when planning staff expand and shrink the layout', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    const backend = task('B-1', 'backend-1', 'build', '진행중')
+    const { rerender } = render(<Office run={makeRun([backend])} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: '백엔드팀', exact: true }))
+    const room = screen.getByRole('region', { name: '백엔드팀', exact: true }) as HTMLElement
+    const representative = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const beforeRoomY = Number.parseFloat(room.style.top)
+    const beforeVisitorY = Number.parseFloat(representative.style.top)
+    const plans = Array.from({ length: 12 }, (_, index) => task(`P-${index}`, `plan-${index}`, 'plan', '진행중'))
+    rerender(<Office run={makeRun([backend, ...plans])} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    const roomShift = Number.parseFloat(room.style.top) - beforeRoomY
+    expect(roomShift).toBeGreaterThan(0)
+    expect(Number.parseFloat(representative.style.top) - beforeVisitorY).toBe(roomShift)
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 백엔드팀' })).toBeTruthy()
+    rerender(<Office run={makeRun([backend])} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    expect(Number.parseFloat(room.style.top)).toBe(beforeRoomY)
+    expect(Number.parseFloat(representative.style.top)).toBe(beforeVisitorY)
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 백엔드팀' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'backend-1 현재 업무 보기' }))
+    expect((await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })).textContent).toContain('backend-1 업무')
+  })
+
+  it('keeps a visitor outside a shorter room when it grows below a taller neighboring room', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
+    const backends = Array.from({ length: 9 }, (_, index) => task(`B-${index}`, `backend-${index}`, 'build', '진행중'))
+    const frontends = Array.from({ length: 5 }, (_, index) => task(`F-${index}`, `frontend-${index}`, 'build', '진행중'))
+    const initial = [...backends, frontends[0]]
+    const { rerender } = render(<Office run={makeRun(initial)} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: '프론트엔드팀' }))
+    const floor = screen.getByRole('region', { name: '관제실 확인 사무실 바닥' })
+    const room = screen.getByRole('region', { name: '프론트엔드팀' }) as HTMLElement
+    const representative = screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }) as HTMLElement
+    const foot = () => ({ x: Number.parseFloat(representative.style.left) + 26, y: Number.parseFloat(representative.style.top) + 48 })
+    const originalBottom = Number.parseFloat(room.style.top) + Number.parseFloat(room.style.height)
+    const steps = (originalBottom - 24 - foot().y) / 24
+    for (let index = 0; index < steps; index++) fireEvent.keyDown(floor, { key: 'ArrowDown', code: 'ArrowDown' })
+    fireEvent.keyDown(floor, { key: 'Enter', code: 'Enter' })
+    const outside = foot()
+    expect(outside).toEqual({ x: 744, y: 744 })
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
+
+    rerender(<Office run={makeRun([...backends, ...frontends])} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    const newBottom = Number.parseFloat(room.style.top) + Number.parseFloat(room.style.height)
+    expect(newBottom).toBeGreaterThan(originalBottom)
+    expect(foot()).toEqual({ x: outside.x, y: outside.y + newBottom - originalBottom })
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
+
+    rerender(<Office run={makeRun(initial)} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    expect(foot()).toEqual(outside)
+    expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
+  })
+
+  it('keeps adjacent staff summaries short while preserving long details for inspection', () => {
     const title1 = '동시에 실행되는 백엔드 작업의 긴 제목이 말풍선 안에서 여러 줄로 읽히는지 확인합니다 '.repeat(2)
     const title2 = '데이터 저장소 검사와 재시도 동작을 확인하는 두 번째 긴 작업 제목입니다 '.repeat(2)
     const run = makeRun([
@@ -652,14 +730,13 @@ describe('simultaneous worker layout', () => {
     first.focus()
     expect(document.activeElement).toBe(first)
     expect(firstBubble.getAttribute('title')).toBe(`backend-1 · ${title1} · 모델 claude-3-7-sonnet-20250219-provider-custom-xlarge · 노력 high`)
-    expect(getComputedStyle(firstBubble).maxHeight).toBe('120px')
-    expect(firstBubble.querySelector('.office-name')?.textContent).toBe('backend-1 · 대리')
-    expect(firstBubble.textContent).toContain(title1)
-    expect(firstBubble.textContent).toContain('대리')
-    expect(firstBubble.textContent).toContain('노력 · high')
-    expect(firstBubble.textContent).toContain('모델 · claude-3-7-sonnet-20250219-provider-custom-xlarge')
-    expect(secondBubble.textContent).toContain(title2)
-    expect(secondBubble.textContent).toContain('모델 · gpt-5.3-codex-with-a-deliberately-long-routing-suffix')
-    expect(names.filter((name) => ['backend-1 · 대리', 'backend-2'].some((label) => name.textContent === label))).toHaveLength(2)
+    expect(firstBubble.querySelector('.office-name')?.textContent).toBe('backend-1')
+    expect(firstBubble.textContent).toContain('작업 중')
+    expect(firstBubble.textContent).not.toContain(title1)
+    expect(firstBubble.textContent).not.toContain('노력')
+    expect(firstBubble.textContent).not.toContain('모델')
+    expect(secondBubble.textContent).not.toContain(title2)
+    expect(secondBubble.textContent).not.toContain('모델')
+    expect(names.filter((name) => ['backend-1', 'backend-2'].includes(name.textContent ?? ''))).toHaveLength(2)
   })
 })

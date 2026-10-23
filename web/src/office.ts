@@ -19,12 +19,6 @@ export type OfficeView = { employees: EmployeeView[] }
 export const OFFICE_WIDTH = 1536
 export const OFFICE_HEIGHT = 1600
 
-export function fitOfficeScale(viewportWidth: number, viewportHeight: number, toolbarHeight = 52, padding = 16): number {
-  const availableWidth = Math.max(1, viewportWidth - padding * 2)
-  const availableHeight = Math.max(1, viewportHeight - toolbarHeight - padding * 2)
-  return Math.min(1, availableWidth / OFFICE_WIDTH, availableHeight / OFFICE_HEIGHT)
-}
-
 export type Scene =
   | { type: 'walk'; who: string; to: 'desk' }
   | { type: 'deliver'; who: string; to: '감사팀' }
@@ -48,6 +42,20 @@ export function seatPosition(department: Pick<DepartmentLayout, 'x' | 'y' | 'w'>
     x: department.x + 1 + (deskIndex % columns) * 4,
     y: department.y + 2 + Math.floor(deskIndex / columns) * 2.5,
   }
+}
+
+export function layoutOffice(employees: EmployeeView[]): DepartmentLayout[] {
+  let offset = 0
+  return [...new Set(roles.departments.map(({ y }) => y))].flatMap((y) => {
+    const row = roles.departments.filter((department) => department.y === y)
+    const expanded = row.map((department) => {
+      const lastDesk = employees.reduce((last, employee) => employee.department === department.key ? Math.max(last, employee.deskIndex) : last, 0)
+      const lastSeat = seatPosition(department, lastDesk)
+      return { ...department, y: department.y + offset, h: Math.max(department.h, Math.ceil(lastSeat.y - department.y + 1.5)) }
+    })
+    offset += Math.max(...expanded.map((department, index) => department.h - row[index].h))
+    return expanded
+  })
 }
 
 export function characterFrame(name: string): [number, number] {

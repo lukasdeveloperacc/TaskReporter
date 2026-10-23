@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { RunView, Task } from '../../shared/contract.ts'
-import { buildOffice, characterFrame, departmentOf, diffScenes, fitOfficeScale, rankOf } from './office.ts'
+import { buildOffice, characterFrame, departmentOf, diffScenes, layoutOffice, rankOf, seatPosition, type Department, type EmployeeView } from './office.ts'
+import roles from './roles.json' with { type: 'json' }
 
 const now = Date.parse('2026-10-19T12:00:00.000Z')
 const makeRun = (patch: Partial<RunView> = {}): RunView => ({
@@ -91,10 +92,40 @@ describe('office roles and employees', () => {
   })
 })
 
-describe('office overview fit', () => {
-  it('fits the complete map inside both viewport dimensions without enlarging it', () => {
-    expect(fitOfficeScale(1000, 800, 60)).toBeLessThan(800 / 1600)
-    expect(fitOfficeScale(2560, 2200, 60)).toBe(1)
+describe('office room layout', () => {
+  const staff = (department: Department, count: number): EmployeeView[] => Array.from({ length: count }, (_, deskIndex) => ({
+    name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle',
+  }))
+
+  it('preserves the original layout when rooms do not need extra seats', () => {
+    expect(layoutOffice([])).toEqual(roles.departments)
+    expect(layoutOffice(staff('회의실', 4))).toEqual(roles.departments)
+  })
+
+  it.each(roles.departments.map(({ key }) => key))('keeps every seat and its approach space inside a crowded %s', (key) => {
+    const employees = staff(key, 25)
+    const baseline = roles.departments.map((department) => ({ ...department }))
+    const room = layoutOffice(employees).find((department) => department.key === key)!
+    const original = roles.departments.find((department) => department.key === key)!
+    expect(room.h).toBeGreaterThan(original.h)
+    expect(room.x).toBe(original.x)
+    expect(room.w).toBe(original.w)
+    for (const employee of employees) {
+      const seat = seatPosition(room, employee.deskIndex)
+      expect(seat.x).toBeGreaterThan(room.x)
+      expect(seat.x + 2).toBeLessThanOrEqual(room.x + room.w)
+      expect(seat.y + 1.5).toBeLessThanOrEqual(room.y + room.h)
+    }
+    expect(roles.departments).toEqual(baseline)
+  })
+
+  it('grows the meeting room at its fifth seat and moves later rows together with their original gaps', () => {
+    const layout = layoutOffice([...staff('회의실', 5), ...staff('백엔드팀', 9)])
+    expect(layout[2]).toMatchObject({ y: 1, h: 9 })
+    expect(layout.slice(3, 6).map(({ y }) => y)).toEqual([11, 11, 11])
+    expect(layout.slice(6, 9).map(({ y }) => y)).toEqual([27, 27, 27])
+    expect(layout[9].y).toBe(36)
+    expect(layoutOffice([])).toEqual(roles.departments)
   })
 })
 
