@@ -550,7 +550,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           <Sprite frame={employee.frame} className="office-person" />
           <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : employee.lastCompletedTask ? ` · 최근 완료 · ${employee.lastCompletedTask.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px` } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : employee.name}</span>
-            <small className="office-employee-status">{employee.state === 'typing' ? '작업 중' : employee.state === 'away' ? '자리 비움' : employee.state === 'gone' ? '퇴근' : '대기'}</small>
+            <small className="office-employee-status">{employee.statusLabel}</small>
             {!employee.task && employee.lastCompletedTask && <small className="office-completed-task" title={employee.lastCompletedTask.title}>완료 · {employee.lastCompletedTask.title}</small>}
             {todos?.length ? <small className="office-todo-progress">TODO {todos.filter((todo) => todo.done).length}/{todos.length}</small> : null}
           </span>
@@ -608,7 +608,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         setVisitorPanel({ ...visitorPanel, tab: 'history' })
       } else closeVisitorPanel()
     }}>
-      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.state === 'away' ? '자리 비움' : selected.state === 'gone' ? '업무 종료' : '근무 중'}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속 · Esc 닫기</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
+      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.statusLabel}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속 · Esc 닫기</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
       <button ref={visitorInspectorCloseRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
     </aside></div>}
   </section>

@@ -34,6 +34,25 @@ const patch4 = (): RunView => makeRun({ state: { stage: '수정', tasks: [
 ] } })
 
 describe('office roles and employees', () => {
+  it('distinguishes completed work, first work, next work, stopped work and missing reports', () => {
+    const run = makeRun({ state: { tasks: [
+      task({ id: 'done', owner: 'backend-done', status: '완료' }),
+      task({ id: 'first', owner: 'backend-first', status: '대기중' }),
+      task({ id: 'prior', owner: 'backend-next', status: '완료' }),
+      task({ id: 'next', owner: 'backend-next', status: '대기중' }),
+      task({ id: 'stopped', owner: 'backend-stopped', status: '중단' }),
+      task({ id: 'unknown', owner: 'backend-unknown', status: undefined }),
+    ] } })
+    const labels = new Map(buildOffice(run, now).employees.map((employee) => [employee.name, employee.statusLabel]))
+    expect(labels.get('backend-done')).toBe('완료 후 대기')
+    expect(labels.get('backend-first')).toBe('시작 대기')
+    expect(labels.get('backend-next')).toBe('다음 작업 대기')
+    expect(labels.get('backend-stopped')).toBe('작업 중단')
+    expect(labels.get('backend-unknown')).toBe('업무 미보고')
+    expect(labels.get('leader')).toBe('업무 미보고')
+    expect(buildOffice({ ...run, ended_at: new Date(now).toISOString() }, now).employees.every((employee) => employee.statusLabel === '업무 종료')).toBe(true)
+  })
+
   it('maps known and unknown owners, ranks, and stable character frames', () => {
     expect(departmentOf('backend-1')).toBe('백엔드팀')
     expect(departmentOf('Karpathy Agent')).toBe('감사팀')
@@ -114,7 +133,7 @@ describe('office roles and employees', () => {
 
 describe('office room layout', () => {
   const staff = (department: Department, count: number): EmployeeView[] => Array.from({ length: count }, (_, deskIndex) => ({
-    name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle',
+    name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle', statusLabel: '업무 미보고',
   }))
 
   it('preserves the original layout when rooms do not need extra seats', () => {

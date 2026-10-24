@@ -15,6 +15,7 @@ export type EmployeeView = {
   task?: { id: string; title: string; elapsedMin: number }
   lastCompletedTask?: { id: string; title: string }
   state: EmployeeState
+  statusLabel: string
 }
 export type OfficeView = { employees: EmployeeView[] }
 export const OFFICE_WIDTH = 1536
@@ -79,12 +80,18 @@ export function buildOffice(run: RunView, now: number): OfficeView {
       const startedAt = assignment.task?.started ? Date.parse(assignment.task.started) : Number.NaN
       const elapsed = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 60_000)) : 0
       const state: EmployeeState = !active(run) ? 'gone' : now - Date.parse(run.last_report_at) > STALE_MS ? 'away' : assignment.task ? 'typing' : 'idle'
+      const ownedTasks = tasks.filter((task) => task.owner === name)
+      const waiting = ownedTasks.some((task) => task.status === '대기중')
+      const idleLabel = waiting ? assignment.lastCompletedTask ? '다음 작업 대기' : '시작 대기'
+        : assignment.lastCompletedTask ? '완료 후 대기'
+        : ownedTasks.some((task) => task.status === '중단') ? '작업 중단' : '업무 미보고'
       return {
         name, department, deskIndex, model: assignment.model ?? null, rank: rankOf(assignment.model), effort: assignment.effort ?? null,
         frame: characterFrame(name),
         ...(assignment.task ? { task: { id: assignment.task.id, title: taskTitle(assignment.task), elapsedMin: elapsed } } : {}),
         ...(assignment.lastCompletedTask ? { lastCompletedTask: { id: assignment.lastCompletedTask.id, title: taskTitle(assignment.lastCompletedTask) } } : {}),
         state,
+        statusLabel: state === 'typing' ? '작업 중' : state === 'away' ? '자리 비움' : state === 'gone' ? '업무 종료' : idleLabel,
       }
     }),
   }

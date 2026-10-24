@@ -282,7 +282,7 @@ describe('real Office visitor staff inspection', () => {
     fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
     const currentInspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
     expect(currentInspector.textContent).toContain('backend-2 업무')
-    expect(currentInspector.textContent).toContain('상태 · 근무 중')
+    expect(currentInspector.textContent).toContain('상태 · 완료 후 대기')
     expect(currentInspector.textContent).toContain('작업 · 완료된 작업')
     expect(currentInspector.textContent).toContain('상태 · 완료')
     expect(currentInspector.textContent).toContain('모델 · 미보고')

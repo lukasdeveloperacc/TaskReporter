@@ -202,7 +202,7 @@ describe('Office scene controls and coordinates', () => {
     const idle = document.querySelector('[data-employee="backend-1"] .office-bubble')!
     const active = document.querySelector('[data-employee="designer-1"] .office-bubble')!
     expect(idle.querySelector('.office-name')?.textContent).toBe('backend-1')
-    expect(idle.textContent).toContain('대기')
+    expect(idle.querySelector('.office-employee-status')?.textContent).toBe('완료 후 대기')
     expect(active.textContent).toContain('작업 중')
     for (const bubble of [idle, active]) {
       expect(bubble.textContent).not.toContain('모델')

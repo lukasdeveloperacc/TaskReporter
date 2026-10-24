@@ -10,7 +10,7 @@ const directions: Direction[] = ['up', 'down', 'left', 'right']
 describe('visitor geometry', () => {
   it('expands map bounds and keeps routes to all seats when every department grows', () => {
     const employees: EmployeeView[] = roles.departments.flatMap(({ key: department }) => Array.from({ length: 9 }, (_, deskIndex) => ({
-      name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle',
+      name: `${department}-${deskIndex}`, department, deskIndex, model: null, rank: null, effort: null, frame: [0, 5], state: 'idle', statusLabel: '업무 미보고',
     })))
     const layout = layoutOffice(employees)
     const expanded = roomGeometry(layout)
