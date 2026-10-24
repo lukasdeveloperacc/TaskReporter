@@ -80,7 +80,7 @@ export function buildOffice(run: RunView, now: number): OfficeView {
       const startedAt = assignment.task?.started ? Date.parse(assignment.task.started) : Number.NaN
       const elapsed = Number.isFinite(startedAt) ? Math.max(0, Math.floor((now - startedAt) / 60_000)) : 0
       const state: EmployeeState = !active(run) ? 'gone' : now - Date.parse(run.last_report_at) > STALE_MS ? 'away' : assignment.task ? 'typing' : 'idle'
-      const ownedTasks = tasks.filter((task) => task.owner === name)
+      const ownedTasks = tasks.filter((task) => task.owner === name && task.kind !== 'aggregate')
       const waiting = ownedTasks.some((task) => task.status === '대기중')
       const idleLabel = waiting ? assignment.lastCompletedTask ? '다음 작업 대기' : '시작 대기'
         : assignment.lastCompletedTask ? '완료 후 대기'
@@ -97,7 +97,7 @@ export function buildOffice(run: RunView, now: number): OfficeView {
   }
 }
 
-const taskMap = (run: RunView) => new Map((run.state.tasks ?? []).map((task) => [task.id, task]))
+const taskMap = (run: RunView) => new Map((run.state.tasks ?? []).filter((task) => task.kind !== 'aggregate').map((task) => [task.id, task]))
 const reviewKey = (round: number, reviewer: string) => `${round}:${reviewer}`
 
 export function diffScenes(prev: RunView | null, next: RunView): Scene[] {

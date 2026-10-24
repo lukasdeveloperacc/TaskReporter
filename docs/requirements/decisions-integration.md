@@ -53,6 +53,8 @@ lukas-plugin basic-team의 Office 모드는 office `report`·`ask` 도구가 있
 
 목적은 오래 변하지 않은 진행중 작업에 실제 상황 설명을 요청하고, model·effort가 누락된 작업에는 실제 런타임 관찰값을 확인하는 것이다. 체크인은 사용자 결재 `ask`와 별도이며, 응답은 설명 기록이다. 응답만으로 작업을 완료하거나 에이전트의 정상 작동을 입증하지 않는다. 범위와 검증 진행은 [변경 010](../changes/010-agent-check-ins.md)에서 관리한다.
 
+승인 집계 확장([변경 026](../changes/026-office-aggregate-and-focused-read.md), 로컬 구현·검증 완료, 실행 서버 반영 별도): `task.kind: aggregate`는 단일 작업자가 없는 집계이므로 model/effort 누락 확인만 면제한다. 30분 정체·TODO 정체와 성공 종료 조건은 그대로 적용한다. kind 생략 또는 actor는 기존 누락 검사를 유지한다. 유효 kind 전환은 과거 pending 체크를 closed로 보존하고 관찰 기준을 새로 설정한다. 집계를 실제 actor 설정 누락을 숨기는 용도로 사용하지 않는다.
+
 ### 감지와 작업별 기준 시각
 
 - 타이머 없이 다음 정상 `report` 처리 시 해당 run의 `진행중` 작업을 검사한다. 작업별 의미 있는 변경 기준 시각보다 [기존 `STALE_MS`](../../shared/contract.ts)의 1,800,000ms **이상**이고 pending 요청이 없으면 한 건을 만든다. 정확히 경계 시각에도 생성 대상이다. 보고가 없으면 요청도 새로 만들지 않는다.

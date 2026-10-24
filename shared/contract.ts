@@ -6,6 +6,7 @@ export const TODO_STALE_MS = 900_000
 export const STAGES = ['계획', '구현', '리뷰', '수정', '마무리', '완료', '중단'] as const
 export const LANES = ['plan', 'build', 'review', 'fix', 'finish'] as const
 export const STATUSES = ['대기중', '진행중', '완료', '중단'] as const
+export const TASK_KINDS = ['actor', 'aggregate'] as const
 export const CLOSED = ['완료', '중단'] as const
 export const REVIEWERS = ['Karpathy Agent', 'Ponytail Agent', 'Impeccable Agent', 'E2E Agent'] as const
 export const SSE_EVENTS = { changed: 'changed', docChanged: 'doc-changed' } as const
@@ -57,6 +58,7 @@ export type Todo = {
 
 export type Task = {
   id: string
+  kind?: (typeof TASK_KINDS)[number]
   title?: string
   owner?: string
   lane?: Lane

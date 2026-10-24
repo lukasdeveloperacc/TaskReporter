@@ -18,13 +18,27 @@
 상태: 구현·자동 검증 완료. 결과는 [변경 008](../changes/008-mcp-validation.md)에 기록한다.
 
 - 도구 인자 최상위와 patch·중첩 항목을 strict 스키마로 검증하여 `close_asks` 같은 오타를 버리지 않고 오류로 반환한다. `close_ask_ids`는 patch 안이 아닌 최상위 인자다. 기존 `patch.title`은 유지한다.
-- task 허용 필드는 `id`, `title`, `owner`, `model`, `effort`, `lane`, `status`, `after`, `note`, `todos`다. decision은 `title`, `body`, review는 `round`, `reviewer`, `verdict`, `note`만 받는다. patch에는 이 배열들과 `title`, `stage`, `summary`, `blockers`, `todo`를 허용한다. lane·status·reviewer의 값은 공용 계약의 enum을 따른다. 각 필드 설명을 MCP 스키마에 노출한다.
+- task 허용 필드는 `id`, `title`, `owner`, `model`, `effort`, `kind`, `lane`, `status`, `after`, `note`, `todos`다. decision은 `title`, `body`, review는 `round`, `reviewer`, `verdict`, `note`만 받는다. patch에는 이 배열들과 `title`, `stage`, `summary`, `blockers`, `todo`를 허용한다. lane·status·reviewer의 값은 공용 계약의 enum을 따른다. 각 필드 설명을 MCP 스키마에 노출한다.
 - model은 전체 모델 ID를 기록한다. effort는 host가 확인한 값(예: low·medium·high)을 보내며 모르면 생략한다. owner가 사무실 좌석을 결정하고 `reviewer-*`는 감사팀, `plan-*`는 회의실로 배치한다. tasks 없이 reviews만 보고해도 리뷰어 캐릭터를 표시한다.
 - 첫 report로 받은 run_id를 이후 호출에 재사용한다. stage 접두어와 기존 병합 키(task id·decision title·review round+reviewer)는 유지한다.
 - 읽기 전용 `get_run({run_id})`은 project_path·stage·ended_at·tasks·decisions·reviews와 pending 질문 목록인 asks를 반환한다. MCP `readOnlyHint`를 선언하며 조회로 실행을 생성하거나 변경하지 않는다.
 - TypeScript 병합 경로도 task·decision·review의 허용 키 외 필드를 거부한다. HTML 원본 progress.py 자체는 수정하지 않으며 기존 병합·시간·종료 규칙과의 호환을 유지한다.
 
 완료 기준은 실제 tools/list의 필드 설명·strict 스키마·읽기 전용 선언, 오타 거부와 저장 전 검증, report 응답 상태, get_run 조회와 pending 질문, owner 좌석·reviews만 있는 캐릭터를 자동 검증하는 것이다. 전체 test·typecheck·build·원본 golden을 통과해야 한다. 실제 Claude Code 클라이언트 검증과 SDK 도구 호출 검증은 구분한다.
+
+### 승인 집계와 작업 선택 조회
+
+상태: 로컬 구현·전체 자동 검사·독립 리뷰·실제 브라우저 확인 완료. 실행 서버 반영은 별도다. 범위와 결과는 [변경 026](../changes/026-office-aggregate-and-focused-read.md)에서 관리한다.
+
+task의 선택적 `kind`는 `actor | aggregate`이며 생략하면 기존 작업자 동작이다. aggregate는 단일 실행자가 없는 승인 집계다. 작업자 model/effort 누락 체크만 면제하며 TODO·정체·성공 종료 검증은 유지한다. 캐릭터 생성·현재 실행 업무·대기 상태 계산에서 제외하고 placements에는 null 부서·unassigned를 반환한다. owner를 보냈다면 책임 식별자는 보존한다. 실제 작업자의 누락 검사를 피하려고 집계로 보고하지 않는다. kind가 바뀌면 이전 pending 체크를 닫고 새 종류에 맞게 관찰한다.
+
+`get_run`의 선택적 `task_ids`는 1~100개 비어 있지 않은 ID다. 지정하면 tasks·state.tasks·placements·작업별 checks만 해당 ID로 제한하며 run 수준 retro 체크와 metadata·asks·reviews·decisions·retro는 유지한다. 필드 생략 시 기존 전체 조회이며 존재하지 않는 ID는 빈 작업 목록이다. 조회로 상태를 변경하지 않는다. 오래된 서버에서는 지원 스키마를 확인하기 전 새 필드를 보내지 않는다.
+
+직원 현재 업무는 진행·대기를 먼저 보여주고 최근 완료 작업을 우선 노출한다. 오래된 완료 업무는 접어서 보존한다. 긴 직원 상세에서도 닫기를 바로 찾을 수 있으며 Esc·포커스 복귀를 유지한다. 집계 카드에는 작업자 설정 누락 대신 집계임을 표시한다.
+
+말풍선에는 보고된 전체 model·effort를 툴팁 외의 본문에도 항상 표시한다. 값이 없으면 미보고이며 다른 작업자 설정이나 모델 이름으로 추측하지 않는다. 집계의 상태 변경은 실제 작업자의 이동·전달·반려 대상을 만들지 않는다.
+
+프로젝트 기록과 직원 상세에는 리뷰어별 최신 라운드의 실제 verdict·note 전문을 표시하고 이전 라운드는 접어서 보존한다. 직원 상세와 실행 이력은 reviewer가 직원 이름과 정확히 일치하는 결과만 포함하며 리뷰만 있는 실행도 보존한다. 리뷰가 없거나 본문이 없으면 미보고 안내를 표시한다. 완료 task나 task.note에서 판정과 리뷰 본문을 추정하지 않는다.
 
 ### 사무실 탐색과 배정 확인
 

@@ -5,6 +5,17 @@ import type { Task } from './contract.ts'
 const task = (patch: Partial<Task> & Pick<Task, 'id'>): Task => ({ owner: 'backend-1', ...patch })
 
 describe('shared office roles', () => {
+  it('does not seat aggregate tasks or let them override actual actor settings', () => {
+    const assignments = actorAssignments([
+      task({ id: 'actor', status: '진행중', model: 'actual', effort: 'high' }),
+      task({ id: 'gate', kind: 'aggregate', status: '진행중', lane: 'plan' }),
+      task({ id: 'done-gate', kind: 'aggregate', status: '완료', owner: 'aggregate-only' }),
+    ])
+    expect(assignments.get('backend-1')).toMatchObject({ task: { id: 'actor' }, model: 'actual', effort: 'high' })
+    expect(assignments.get('backend-1')?.lastCompletedTask).toBeUndefined()
+    expect(assignments.has('aggregate-only')).toBe(false)
+  })
+
   it('preserves plan lane precedence and exact/prefix owner matching', () => {
     expect(departmentOf('backend-1')).toBe('백엔드팀')
     expect(departmentOf('backend-1', 'plan')).toBe('회의실')

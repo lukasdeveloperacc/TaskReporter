@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from 'react'
 import type { RunView, Task } from '../../shared/contract.ts'
 import { actorAssignments, resolveDepartment } from '../../shared/office-roles.ts'
+import { ReviewResults } from './ReviewResults.tsx'
 import './employee-report.css'
 
 export type ReportTab = 'current' | 'history'
@@ -55,8 +56,10 @@ function TaskReport({ task, now, headingLevel = 3 }: { task: Task; now: number; 
     </header>
     <p className="employee-report__task-id">작업 ID · {task.id}</p>
     <div className="employee-report__meta">
-      <span>모델 · {task.model || '미보고'}</span>
-      <span>노력 · {task.effort || '미보고'}</span>
+      {task.kind === 'aggregate' ? <span>집계 · 단일 작업자 설정 해당 없음</span> : <>
+        <span>모델 · {task.model || '미보고'}</span>
+        <span>노력 · {task.effort || '미보고'}</span>
+      </>}
       <span>시작 · {dateLabel(task.started) ?? '미보고'}</span>
       {dateLabel(task.finished) && <span>종료 · {dateLabel(task.finished)}</span>}
       <span>경과 시간 · {elapsed === null ? '미보고' : `${elapsed}분`}</span>
@@ -85,9 +88,20 @@ function TaskReport({ task, now, headingLevel = 3 }: { task: Task; now: number; 
 export function EmployeeReport({ owner, runs, currentRunId, tab, onTabChange, now }: EmployeeReportProps) {
   const currentRun = runs.find((run) => run.id === currentRunId)
   const currentTasks = currentRun?.state.tasks?.filter((task) => task.owner === owner) ?? []
+  const currentReviews = currentRun?.state.reviews?.filter((review) => review.reviewer === owner) ?? []
+  const latestCompleted = actorAssignments(currentTasks).get(owner)?.lastCompletedTask
+  const olderCompleted = currentTasks.filter((task) => task.status === '완료' && task !== latestCompleted)
+  const visibleTasks = [
+    ...currentTasks.filter((task) => task.status === '진행중'),
+    ...currentTasks.filter((task) => task.status === '대기중'),
+    ...(latestCompleted ? [latestCompleted] : []),
+    ...currentTasks.filter((task) => task.status !== '진행중' && task.status !== '대기중' && task.status !== '완료'),
+  ]
   const placement = resolveDepartment(owner, actorAssignments(currentRun?.state.tasks ?? []).get(owner)?.lane)
   const history = runs
-    .filter((run) => run.project_path === currentRun?.project_path && run.state.tasks?.some((task) => task.owner === owner))
+    .filter((run) => run.project_path === currentRun?.project_path && (
+      run.state.tasks?.some((task) => task.owner === owner) || run.state.reviews?.some((review) => review.reviewer === owner)
+    ))
     .map((run, index) => ({ run, index, timestamp: runTimestamp(run) }))
     .sort((a, b) => b.timestamp - a.timestamp || a.index - b.index)
   const keyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -117,18 +131,27 @@ export function EmployeeReport({ owner, runs, currentRunId, tab, onTabChange, no
         <p>실행 ID · {currentRunId} · 마지막 보고 · {dateLabel(currentRun?.last_report_at) ?? '미보고'}</p>
         {placement.matched_by === 'fallback' && <p>임시 자리 · 보고된 owner “{owner}”에 맞는 부서 규칙이 없습니다. 보고자가 owner를 확인해야 합니다.</p>}
         <p>작업 상태는 마지막 보고 기준입니다. 실제 에이전트의 실행 여부와 다를 수 있습니다.</p>
-        {currentTasks.length ? <ul className="employee-report__tasks">{currentTasks.map((task, index) => <li key={`${task.id}-${index}`}><TaskReport task={task} now={now} /></li>)}</ul> : <><p>현재 진행 중인 작업이 없습니다.</p><p>모델 · 미보고</p><p>노력 · 미보고</p></>}
+        {currentReviews.length > 0 && <ReviewResults reviews={currentReviews} />}
+        {currentTasks.length ? <>
+          <ul className="employee-report__tasks">{visibleTasks.map((task) => <li key={task.id}><TaskReport task={task} now={now} /></li>)}</ul>
+          {olderCompleted.length > 0 && <details className="employee-report__completed">
+            <summary>이전 완료 업무 {olderCompleted.length}개</summary>
+            <ul className="employee-report__tasks">{olderCompleted.map((task) => <li key={task.id}><TaskReport task={task} now={now} /></li>)}</ul>
+          </details>}
+        </> : <><p>현재 진행 중인 작업이 없습니다.</p><p>모델 · 미보고</p><p>노력 · 미보고</p></>}
       </> : <>
-        <p>보고한 업무를 최근 순서로 모았습니다.</p>
+        <p>보고한 업무와 리뷰를 최근 순서로 모았습니다.</p>
         {history.length ? <ul className="employee-report__history">{history.map(({ run }) => {
-          const tasks = run.state.tasks!.filter((task) => task.owner === owner)
+          const tasks = run.state.tasks?.filter((task) => task.owner === owner) ?? []
+          const reviews = run.state.reviews?.filter((review) => review.reviewer === owner) ?? []
           const updated = dateLabel(run.last_report_at)
           const ended = dateLabel(run.ended_at)
           return <li key={run.id}>
             <h3>{run.title || '실행 제목 미보고'}</h3>
             <p>실행 ID · {run.id} · 상태 · {run.ended_at ? '종료됨' : '진행 중'}</p>
             <p>최근 보고 · {updated ?? '미보고'}{ended ? ` · 종료 · ${ended}` : ''}</p>
-            <ul className="employee-report__tasks">{tasks.map((task, index) => <li key={`${task.id}-${index}`}><TaskReport task={task} now={now} headingLevel={4} /></li>)}</ul>
+            {reviews.length > 0 && <ReviewResults reviews={reviews} />}
+            {tasks.length ? <ul className="employee-report__tasks">{tasks.map((task, index) => <li key={`${task.id}-${index}`}><TaskReport task={task} now={now} headingLevel={4} /></li>)}</ul> : <p>보고된 작업이 없습니다.</p>}
           </li>
         })}</ul> : <p>이 직원에 대해 보고된 이전 업무가 없습니다.</p>}
       </>}

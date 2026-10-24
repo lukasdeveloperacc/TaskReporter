@@ -1,0 +1,12 @@
+.review-results { min-width: 0; }
+.review-results h3 { margin: 0 0 12px; font-size: 20px; }
+.review-results__list { margin: 0; padding: 0; list-style: none; }
+.review-results__list > li { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.review-results__list > li:last-child { border-bottom: 0; }
+.review-results__list p { margin: 0; line-height: 1.6; }
+.review-results__verdict { font-weight: 700; }
+.review-results__verdict[data-verdict="PASS"] { color: var(--teal-deep); }
+.review-results__verdict[data-verdict="CHANGES_REQUIRED"] { color: var(--red); }
+.review-results__note { margin-top: 6px !important; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-results summary { min-height: 44px; padding: 10px 0; color: var(--teal-deep); cursor: pointer; }
+.review-results summary:focus-visible { outline: 3px solid var(--ochre); outline-offset: 3px; }

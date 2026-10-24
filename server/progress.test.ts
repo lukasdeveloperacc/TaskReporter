@@ -19,6 +19,16 @@ function withoutTimes(data: ProgressData): ProgressData {
 }
 
 describe('progress apply', () => {
+  it('merges an explicit task kind while keeping existing actor defaults and completion guards', () => {
+    const original = apply({}, { tasks: [{ id: 'G', kind: 'aggregate', status: '진행중', todos: [{ id: 'approval' }] }, { id: 'A', status: '대기중' }] }, 1_000)
+    expect(original.tasks?.[0].kind).toBe('aggregate')
+    expect(original.tasks?.[1]).not.toHaveProperty('kind')
+    expect(apply(original, { tasks: [{ id: 'G', note: 'waiting' }] }, 2_000).tasks?.[0].kind).toBe('aggregate')
+    expect(apply(original, { tasks: [{ id: 'G', kind: 'actor' }] }, 2_000).tasks?.[0].kind).toBe('actor')
+    expect(() => apply(original, { tasks: [{ id: 'G', status: '완료' }] }, 2_000)).toThrow('unfinished TODOs')
+    expect(() => apply(original, { stage: '완료' }, 2_000)).toThrow('tasks are still open')
+  })
+
   it('matches the progress.py golden after replaying every example checkpoint', () => {
     let state = apply({}, INIT(title), 1_792_382_400_000)
     for (const patch of patches) state = apply(state, patch, 1_792_382_400_000)
@@ -30,7 +40,9 @@ describe('progress apply', () => {
 
   it.each([
     [{ extra: true }, 'unknown fields: extra; allowed: title, stage, summary, todo, blockers, tasks, decisions, reviews'],
-    [{ tasks: [{ id: 'T', close_asks: [] }] }, 'task T: unknown fields: close_asks; allowed: id, title, owner, model, effort, lane, status, after, note, todos'],
+    [{ tasks: [{ id: 'T', close_asks: [] }] }, 'task T: unknown fields: close_asks; allowed: id, kind, title, owner, model, effort, lane, status, after, note, todos'],
+    [{ tasks: [{ id: 'T', kind: 'gate' }] }, 'task T: kind must be one of actor, aggregate'],
+    [{ tasks: [{ id: 'T', kind: null }] }, 'task T: kind must be one of actor, aggregate'],
     [{ tasks: [{ id: 'T', started: 'forged' }] }, 'task T: unknown fields: started'],
     [{ decisions: [{ title: 'D', note: 'wrong field' }] }, 'decision D: unknown fields: note; allowed: title, body'],
     [{ reviews: [{ round: 1, reviewer: 'Karpathy Agent', status: 'PASS' }] }, 'review 1 Karpathy Agent: unknown fields: status; allowed: round, reviewer, verdict, note'],

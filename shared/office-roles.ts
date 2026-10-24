@@ -48,7 +48,7 @@ function compareCompleted(a: Task, b: Task): number {
 export function actorAssignments(tasks: Task[]): Map<string, ActorAssignment> {
   const assignments = new Map<string, ActorAssignment>([['leader', {}]])
   for (const task of tasks) {
-    if (!task.owner) continue
+    if (!task.owner || task.kind === 'aggregate') continue
     const current = assignments.get(task.owner) ?? {}
     if (task.status === '진행중') Object.assign(current, { task, lane: task.lane, model: task.model, effort: task.effort })
     else if (!current.task && (task.model !== undefined || task.effort !== undefined)) {

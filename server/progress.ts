@@ -4,6 +4,7 @@ import {
   REVIEWERS,
   STAGES,
   STATUSES,
+  TASK_KINDS,
   type ProgressData,
   type Task,
 } from '../shared/contract.ts'
@@ -77,7 +78,10 @@ export function apply(data: ProgressData, patch: unknown, now: number): Progress
   for (const rawTask of tasks) {
     if (!isRecord(rawTask) || typeof rawTask.id !== 'string' || !rawTask.id) fail('each task needs a string id')
     const task = rawTask
-    rejectUnknown(task, ['id', 'title', 'owner', 'model', 'effort', 'lane', 'status', 'after', 'note', 'todos'], `task ${task.id}`)
+    rejectUnknown(task, ['id', 'kind', 'title', 'owner', 'model', 'effort', 'lane', 'status', 'after', 'note', 'todos'], `task ${task.id}`)
+    if ('kind' in task && !TASK_KINDS.includes(task.kind as (typeof TASK_KINDS)[number])) {
+      fail(`task ${task.id}: kind must be one of ${TASK_KINDS.join(', ')}`)
+    }
     if ('lane' in task && !LANES.includes(task.lane as (typeof LANES)[number])) {
       fail(`task ${task.id}: lane must be one of ${LANES.join(', ')}`)
     }

@@ -124,6 +124,7 @@ describe('office app', () => {
     expect(patch.properties.tasks.items.additionalProperties).toBe(false)
     expect(patch.properties.tasks.items.properties.lane!.enum).toEqual(['plan', 'build', 'review', 'fix', 'finish'])
     expect(patch.properties.tasks.items.properties.status!.enum).toEqual(['대기중', '진행중', '완료', '중단'])
+    expect(patch.properties.tasks.items.properties.kind!.enum).toEqual(['actor', 'aggregate'])
     expect(patch.properties.tasks.items.properties.model!.description).toContain('전체 model ID')
     expect(patch.properties.tasks.items.properties.effort!.description).toContain('모르면 생략')
     const todos = patch.properties.tasks.items.properties.todos as unknown as {
@@ -140,6 +141,92 @@ describe('office app', () => {
     expect(client.getInstructions()).toBe(reportTool.description)
     expect(tools.every((tool) => tool.inputSchema.additionalProperties === false)).toBe(true)
     expect(tools.find((tool) => tool.name === 'get_run')!.annotations?.readOnlyHint).toBe(true)
+    await client.close()
+  })
+
+  it('stores aggregate kinds without actor metadata checks or character placements', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: { tasks: [
+      { id: 'gate', kind: 'aggregate', owner: 'frontend-actual', lane: 'plan', status: '진행중', todos: [{ id: 'approval' }] },
+      { id: 'actor', owner: 'frontend-actual', status: '진행중', model: 'actual', effort: 'high' },
+      { id: 'missing', kind: 'actor', status: '진행중' },
+    ] } }))!
+    const runId = String(first.run_id)
+    expect(first.checks).toEqual([expect.objectContaining({ task_id: 'missing' })])
+    expect(first.placements).toContainEqual({ task_id: 'gate', owner: 'frontend-actual', department: null, matched_by: 'unassigned' })
+    expect(first.placements).toContainEqual({ task_id: 'actor', owner: 'frontend-actual', department: '프론트엔드팀', matched_by: 'owner' })
+    const merged = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'gate', note: '승인 대기' }] } }))!
+    expect((merged.state as ProgressData).tasks?.find((task) => task.id === 'gate')?.kind).toBe('aggregate')
+    const unfinished = await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'gate', status: '완료' }] } })
+    expect(unfinished.isError).toBe(true)
+    expect(await report(client, base, { patch: { tasks: [{ id: 'invalid', kind: 'gate' }] } })).toHaveProperty('isError', true)
+    const read = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect((read.tasks as { id: string; kind?: string }[]).find((task) => task.id === 'gate')).toMatchObject({ kind: 'aggregate', status: '진행중' })
+    await client.close()
+  })
+
+  it('resets obsolete checks on actor/aggregate transitions and retains aggregate stale checks', async () => {
+    let clock = 10_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'T', status: '진행중' }] } }))!
+    const runId = String(first.run_id)
+    const originalId = (first.checks as { id: string }[])[0]!.id
+    clock += 1
+    const aggregate = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', kind: 'aggregate' }] } }))!
+    expect(aggregate.checks).toEqual([])
+    expect(db.check(originalId)?.status).toBe('closed')
+    clock += 1_800_000
+    const stale = parseTool(await report(client, base, { run_id: runId, patch: {} }))!
+    const staleCheck = (stale.checks as { id: string; question: string }[])[0]!
+    expect(staleCheck.question).toBe('30분째 변화 없음: 현재 상태·막힌 점을 check_replies로 알려 주세요.')
+    clock += 1
+    const actor = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'T', kind: 'actor' }] } }))!
+    expect(db.check(staleCheck.id)?.status).toBe('closed')
+    expect(actor.checks).toEqual([expect.objectContaining({ question: expect.stringContaining('누락: model, effort') })])
+    await client.close()
+  })
+
+  it('retains aggregate TODO stall checks without requesting actor metadata', async () => {
+    let clock = 10_000
+    const { base, client } = await start({ now: () => clock })
+    const first = parseTool(await report(client, base, { patch: { tasks: [{ id: 'G', kind: 'aggregate', status: '진행중', todos: [{ id: 'approval' }] }] } }))!
+    const runId = String(first.run_id)
+    expect(first.checks).toEqual([])
+    clock += 900_000
+    const moved = parseTool(await report(client, base, { run_id: runId, patch: { tasks: [{ id: 'G', note: '판정 수신 대기' }] } }))!
+    const question = (moved.checks as { question: string }[])[0]!.question
+    expect(question).toContain('15분째 TODO 체크 없음')
+    expect(question).toContain('approval (approval)')
+    expect(question).not.toContain('누락:')
+    await client.close()
+  })
+
+  it('filters run tasks and task checks without mutating state or removing run metadata', async () => {
+    const { base, client } = await start()
+    const first = parseTool(await report(client, base, { patch: {
+      summary: 'full metadata', decisions: [{ title: 'decision', body: 'kept' }], reviews: [{ round: 1, reviewer: 'Karpathy Agent', verdict: 'PASS' }],
+      tasks: [{ id: 'A', owner: 'backend-same', status: '진행중' }, { id: 'B', owner: 'backend-same', lane: 'plan', status: '진행중' }],
+    } }))!
+    const runId = String(first.run_id)
+    await ask(client, { run_id: runId, question: '실제 결정?', options: ['예', '아니오'] })
+    const before = db.snapshot(() => false)
+    const full = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    const filtered = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId, task_ids: ['A'] } }))!
+    expect(filtered.tasks).toEqual((full.tasks as { id: string }[]).filter((task) => task.id === 'A'))
+    expect(filtered.state).toEqual({ ...(full.state as ProgressData), tasks: filtered.tasks })
+    expect(filtered.placements).toEqual([{ task_id: 'A', owner: 'backend-same', department: '회의실', matched_by: 'lane' }])
+    expect(filtered.checks).toEqual((full.checks as { task_id: string }[]).filter((check) => check.task_id === 'A'))
+    for (const key of ['run_id', 'project_path', 'last_report_at', 'stage', 'ended_at', 'asks', 'decisions', 'reviews', 'retro']) expect(filtered[key]).toEqual(full[key])
+    expect(db.snapshot(() => false)).toEqual(before)
+    const unknown = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId, task_ids: ['unknown'] } }))!
+    expect(unknown).toMatchObject({ tasks: [], state: { tasks: [] }, placements: [], checks: [] })
+    for (const task_ids of [[], [''], Array.from({ length: 101 }, () => 'A'), 'A']) {
+      expect(await client.callTool({ name: 'get_run', arguments: { run_id: runId, task_ids } })).toHaveProperty('isError', true)
+    }
+    await report(client, base, { run_id: runId, patch: { stage: '중단' } })
+    const ended = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId, task_ids: ['unknown'] } }))!
+    expect(ended.checks).toEqual([expect.objectContaining({ task_id: '__retro__' })])
+    expect(ended.tasks).toEqual([])
     await client.close()
   })
 

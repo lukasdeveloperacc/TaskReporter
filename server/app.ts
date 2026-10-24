@@ -6,7 +6,7 @@ import express from 'express'
 import { existsSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import * as z from 'zod/v4'
-import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type ActiveRunSummary, type AskArgs, type AskResult, type OpenTodos, type ProgressData, type ReportArgs, type Task, type TaskPlacement } from '../shared/contract.ts'
+import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, TASK_KINDS, SSE_EVENTS, type ActiveRunSummary, type AskArgs, type AskResult, type OpenTodos, type ProgressData, type ReportArgs, type Task, type TaskPlacement } from '../shared/contract.ts'
 import { actorAssignments, resolveDepartment, roles } from '../shared/office-roles.ts'
 import { apply, INIT } from './progress.ts'
 import { docDiff, inWorkspace, readDoc, resolveDoc, watchDoc } from './docs.ts'
@@ -65,7 +65,7 @@ function taskPlacements(tasks: Task[]): TaskPlacement[] {
   return tasks.map((task) => {
     const owner = task.owner || null
     const assignment = owner ? assignments.get(owner) : undefined
-    const resolved = resolveDepartment(owner ?? undefined, assignment?.lane)
+    const resolved = resolveDepartment(task.kind === 'aggregate' ? undefined : owner ?? undefined, assignment?.lane)
     return { task_id: task.id, owner, department: resolved.department, matched_by: resolved.matched_by }
   })
 }
@@ -277,6 +277,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     'close_ask_ids는 patch 안이 아닌 report 최상위에 넣으세요.',
     'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
     'tasks는 id, decisions는 title, reviews는 round+reviewer로 merge됩니다. task.todos도 같은 작업 안에서 id로 보낸 필드만 merge하고 미전송 항목과 최초 순서를 유지합니다. 새 todo의 text 생략 시 id를 쓰며, 체크 예: tasks:[{id:"FE",todos:[{id:"FE-2",done:true}]}].',
+    'task.kind는 생략하면 actor입니다. 단일 실행자가 없는 승인 집계에는 aggregate를 사용하세요. 집계는 캐릭터를 만들지 않고 model/effort 누락 체크만 면제하며 TODO 정체·장기 미변경·완료 검증은 유지합니다. get_run.task_ids로 필요한 작업만 조회할 수 있으며 필터된 state.tasks는 전체 snapshot이 아닙니다.',
     'task의 owner와 shared office rules가 배우 배정을 정합니다. report/get_run placements는 데이터에서 계산한 배정이며 브라우저 렌더링이나 실제 좌석 표시 증거가 아닙니다. fallback/unassigned를 확인하려면 get_office_rules를 조회하세요.',
     'get_office_rules는 부서와 owner 매칭 규칙을, get_active_runs는 지정한 절대 project_path의 종료되지 않은 run만 조회합니다. hidden 프로젝트도 포함하며 다른 프로젝트를 검색하지 않습니다.',
     '신규 실행 전 get_active_runs로 같은 프로젝트의 실행을 확인하세요. 새 run의 첫 report에만 active_runs(자신 포함 진행 중 실행)를 반환합니다. 자동 재개·형제 실행 종료는 하지 않습니다. get_run.last_report_at은 저장된 마지막 보고 시각이며 실제 agent 생존 증거가 아닙니다.',
@@ -306,6 +307,7 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
       todo: z.string().optional().describe('다음 할 일'),
       tasks: z.array(z.object({
         id: z.string().min(1).describe('작업 merge 키; 같은 작업은 같은 id 사용'),
+        kind: z.enum(TASK_KINDS).optional().describe('생략=actor. aggregate는 단일 실행자 없는 승인 집계; 캐릭터·모델 누락 체크만 제외하고 TODO·완료 조건 유지'),
         title: z.string().optional().describe('작업 제목'),
         owner: z.string().optional().describe('담당 에이전트 이름; 사무실 좌석을 결정'),
         model: z.string().optional().describe('host가 확인한 전체 model ID; 별칭이나 추측값 대신 실제 ID 사용, 모르면 생략'),
@@ -461,21 +463,26 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     })
     server.registerTool('ask', { description: 'Ask the user for a decision; default wait 100 seconds. On pending, wait retry_after_sec then call with the same ask_id. Answered replies remain available through ask, report.asks and get_run.asks; deduplicate by ask_id.', inputSchema: askSchema, outputSchema: askOutputSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
     server.registerTool('get_run', {
-      description: 'Read a run with full state, pending and answered asks, and check history without changing state; deduplicate answered asks by ask_id',
-      inputSchema: z.object({ run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id') }).strict(),
+      description: 'Read a run without changing state; optional task_ids filters tasks, state.tasks, placements and task checks, retaining run-level retro checks and all run metadata. Omit task_ids for full state; deduplicate answered asks by ask_id',
+      inputSchema: z.object({
+        run_id: z.string().describe('조회할 실행 id; report 응답에서 받은 run_id'),
+        task_ids: z.array(z.string().min(1)).min(1).max(100).optional().describe('선택한 작업만 조회(1~100개 ID); 생략하면 전체. 미등록 ID는 빈 결과, run 수준 메타데이터·결재·리뷰·회고는 유지'),
+      }).strict(),
       outputSchema: getRunOutputSchema,
       annotations: { readOnlyHint: true },
-    }, async ({ run_id }) => {
+    }, async ({ run_id, task_ids }) => {
       const run = db.getRun(run_id)
       if (!run) toolError(`unknown run_id: ${run_id}`)
+      const selected = task_ids ? new Set(task_ids) : undefined
+      const tasks = (run.state.tasks ?? []).filter((task) => !selected || selected.has(task.id))
       return jsonResult({
-        checks: db.checks(run.id),
+        checks: db.checks(run.id).filter((check) => !selected || check.task_id === RETRO_TASK_ID || selected.has(check.task_id)),
         asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
-        run_id: run.id, project_path: run.project_path, state: run.state, stage: run.state.stage, ended_at: run.ended_at,
+        run_id: run.id, project_path: run.project_path, state: selected ? { ...run.state, tasks } : run.state, stage: run.state.stage, ended_at: run.ended_at,
         last_report_at: run.last_report_at,
-        tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
+        tasks, decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
         retro: db.runRetro(run.id),
-        placements: taskPlacements(run.state.tasks ?? []),
+        placements: taskPlacements(run.state.tasks ?? []).filter((placement) => !selected || selected.has(placement.task_id)),
       })
     })
     server.registerTool('get_retros', {

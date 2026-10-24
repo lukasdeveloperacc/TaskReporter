@@ -38,6 +38,16 @@ async function renderApp(state: StateSnapshot, hash = '#/') {
 }
 
 describe('App route integration', () => {
+  it('shows the selected run review verdict and full result even without reviewer tasks', async () => {
+    const reviewed = { ...newer, state: { ...newer.state, reviews: [{ round: 2, reviewer: 'Karpathy Agent', verdict: 'CHANGES_REQUIRED', note: '첫 줄: 수정할 문제\n둘째 줄: 재현 방법과 검증 결과' }] } }
+    await renderApp(snapshot({ projects: [{ ...project, runs: [older, reviewed] }] }), '#/run/newer')
+    expect(await screen.findByText('CHANGES_REQUIRED')).toBeTruthy()
+    expect(screen.getByText(/첫 줄: 수정할 문제/).textContent).toBe('첫 줄: 수정할 문제\n둘째 줄: 재현 방법과 검증 결과')
+    fireEvent.change(screen.getByRole('combobox', { name: '진행 중 run' }), { target: { value: 'older' } })
+    expect(await screen.findByText('아직 보고된 리뷰 결과가 없습니다.')).toBeTruthy()
+    expect(screen.queryByText('CHANGES_REQUIRED')).toBeNull()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     window.location.hash = '#/'

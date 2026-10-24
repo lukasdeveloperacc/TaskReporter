@@ -28,6 +28,7 @@ describe('Office scene controls and coordinates', () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
     const run = makeRun([
       { ...task('FE-DONE', 'frontend-1'), title: '이전 완료 작업', finished: stamp },
+      { ...task('FE-OLDER', 'frontend-1'), title: '접힌 완료 작업', finished: stamp, todos: [{ id: 'OLD-1', text: '이전 증거', done: true, detail: '접힌 증거 상세' }] },
       { ...task('FE', 'frontend-1', 'build', '진행중'), todos: [
         { id: 'FE-1', text: '계약 확인', done: true },
         { id: 'FE-2', text: '화면 구현', phase: '구현', detail: '키보드로 상세 열기' },
@@ -44,6 +45,15 @@ describe('Office scene controls and coordinates', () => {
     fireEvent(summary, enter)
     expect(enter.defaultPrevented).toBe(false)
     expect(screen.getByRole('tab', { name: '현재 업무' }).getAttribute('aria-selected')).toBe('true')
+    const close = within(dialog).getByRole('button', { name: '닫기' })
+    const completedSummary = within(dialog).getByText('이전 완료 업무 1개')
+    close.focus()
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(completedSummary)
+    fireEvent.keyDown(completedSummary, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.click(close)
+    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
   })
 
   it('shows a compact latest completion while idle and exposes its full title in employee details', async () => {
@@ -193,7 +203,7 @@ describe('Office scene controls and coordinates', () => {
     stylesheet.remove()
   })
 
-  it('keeps idle and active summaries compact without repeating report metadata', () => {
+  it('shows reported model and effort for completed work and honest missing values for active work', () => {
     const run = makeRun([
       { id: 'C', owner: 'backend-1', lane: 'build', status: '완료', title: '완료한 Claude 작업', model: 'claude-3-7-sonnet-20250219', effort: 'high' },
       { id: 'N', owner: 'designer-1', lane: 'build', status: '진행중', title: '현재 진행 작업' },
@@ -204,20 +214,22 @@ describe('Office scene controls and coordinates', () => {
     expect(idle.querySelector('.office-name')?.textContent).toBe('backend-1')
     expect(idle.querySelector('.office-employee-status')?.textContent).toBe('완료 후 대기')
     expect(active.textContent).toContain('작업 중')
+    expect(idle.querySelector('.office-model')?.textContent).toBe('모델 · claude-3-7-sonnet-20250219')
+    expect(idle.querySelector('.office-effort')?.textContent).toBe('노력 · high')
+    expect(active.querySelector('.office-model')?.textContent).toBe('모델 · 미보고')
+    expect(active.querySelector('.office-effort')?.textContent).toBe('노력 · 미보고')
     for (const bubble of [idle, active]) {
-      expect(bubble.textContent).not.toContain('모델')
-      expect(bubble.textContent).not.toContain('노력')
       expect(bubble.querySelector('.office-task-title')).toBeNull()
     }
   })
 
-  it('keeps the away state visible while report metadata stays in the detail view', () => {
+  it('keeps the away state and its reported model and effort visible', () => {
     const stale = makeRun([{ id: 'STALE', owner: 'backend-1', lane: 'build', status: '진행중', title: '중단된 작업', model: 'gpt-5.3-codex', effort: 'high' }], { last_report_at: '2026-10-19T11:00:00.000Z' })
     render(<StaticOffice run={stale} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     const employee = document.querySelector('[data-employee="backend-1"]')!
     expect(employee.getAttribute('data-state')).toBe('away')
-    expect(employee.querySelector('.office-bubble')?.textContent).not.toContain('모델')
-    expect(employee.querySelector('.office-bubble')?.textContent).not.toContain('노력')
+    expect(employee.querySelector('.office-model')?.textContent).toBe('모델 · gpt-5.3-codex')
+    expect(employee.querySelector('.office-effort')?.textContent).toBe('노력 · high')
     expect(employee.querySelector('.office-bubble')?.textContent).toContain('자리 비움')
   })
 
@@ -743,7 +755,7 @@ describe('simultaneous worker layout', () => {
     expect(screen.getByRole('img', { name: '사무실 미니맵 · 현재 위치 복도' })).toBeTruthy()
   })
 
-  it('keeps adjacent staff summaries short while preserving long details for inspection', () => {
+  it('keeps adjacent staff bubbles within their seats and shows full long model values', () => {
     const title1 = '동시에 실행되는 백엔드 작업의 긴 제목이 말풍선 안에서 여러 줄로 읽히는지 확인합니다 '.repeat(2)
     const title2 = '데이터 저장소 검사와 재시도 동작을 확인하는 두 번째 긴 작업 제목입니다 '.repeat(2)
     const run = makeRun([
@@ -772,10 +784,11 @@ describe('simultaneous worker layout', () => {
     expect(firstBubble.querySelector('.office-name')?.textContent).toBe('backend-1')
     expect(firstBubble.textContent).toContain('작업 중')
     expect(firstBubble.textContent).not.toContain(title1)
-    expect(firstBubble.textContent).not.toContain('노력')
-    expect(firstBubble.textContent).not.toContain('모델')
+    expect(firstBubble.querySelector('.office-model')?.textContent).toBe('모델 · claude-3-7-sonnet-20250219-provider-custom-xlarge')
+    expect(firstBubble.querySelector('.office-effort')?.textContent).toBe('노력 · high')
     expect(secondBubble.textContent).not.toContain(title2)
-    expect(secondBubble.textContent).not.toContain('모델')
+    expect(secondBubble.querySelector('.office-model')?.textContent).toBe('모델 · gpt-5.3-codex-with-a-deliberately-long-routing-suffix')
+    expect(secondBubble.querySelector('.office-effort')?.textContent).toBe('노력 · medium')
     expect(names.filter((name) => ['backend-1', 'backend-2'].includes(name.textContent ?? ''))).toHaveLength(2)
   })
 })

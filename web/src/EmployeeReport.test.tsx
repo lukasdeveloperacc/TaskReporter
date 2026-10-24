@@ -10,6 +10,72 @@ const makeRun = (id: string, title: string, tasks: Task[], patch: Partial<RunVie
 })
 
 describe('EmployeeReport', () => {
+  it('shows only the exact owner review results while preserving the no-task state', () => {
+    const run = makeRun('current', '리뷰 실행', [], { state: { reviews: [
+      { round: 1, reviewer: 'review-e2e', verdict: 'CHANGES_REQUIRED', note: '모바일 닫기 버튼 수정 필요' },
+      { round: 1, reviewer: 'review-e2e-extra', verdict: 'PASS', note: '다른 직원 리뷰' },
+    ] } })
+    render(<EmployeeReport owner="review-e2e" runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={0} />)
+    const reviews = screen.getByRole('region', { name: '리뷰 결과' })
+    expect(within(reviews).getByText('CHANGES_REQUIRED')).toBeTruthy()
+    expect(within(reviews).getByText('모바일 닫기 버튼 수정 필요')).toBeTruthy()
+    expect(screen.queryByText('다른 직원 리뷰')).toBeNull()
+    expect(screen.queryByText('PASS')).toBeNull()
+    expect(screen.getByText('현재 진행 중인 작업이 없습니다.')).toBeTruthy()
+  })
+
+  it('includes reviews-only history runs and isolates each owner and project', () => {
+    const current = makeRun('current', '현재 실행', [])
+    const reviewRun = makeRun('review-only', '작업 없는 리뷰 실행', [], {
+      ended_at: '2026-10-20T10:00:00Z',
+      state: { reviews: [
+        { round: 2, reviewer: 'review-e2e', verdict: 'PASS', note: '재검증 통과' },
+        { round: 2, reviewer: 'review-e2e-extra', verdict: 'CHANGES_REQUIRED', note: '숨길 다른 직원 결과' },
+      ] },
+    })
+    const otherOwner = makeRun('other-owner', '다른 직원 실행', [], { state: { reviews: [{ round: 1, reviewer: 'review-e2e-extra', note: '다른 직원만 참여' }] } })
+    const foreign = { ...reviewRun, id: 'foreign', title: '외부 리뷰 실행', project_path: '/foreign' }
+    render(<EmployeeReport owner="review-e2e" runs={[current, otherOwner, foreign, reviewRun]} currentRunId="current" tab="history" onTabChange={() => {}} now={0} />)
+    expect(screen.getByRole('heading', { name: '작업 없는 리뷰 실행' })).toBeTruthy()
+    expect(screen.getByText(/실행 ID · review-only · 상태 · 종료됨/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '리뷰 결과' })).getByText('PASS')).toBeTruthy()
+    expect(screen.getByText('재검증 통과')).toBeTruthy()
+    expect(screen.getByText('보고된 작업이 없습니다.')).toBeTruthy()
+    for (const text of ['숨길 다른 직원 결과', '다른 직원 실행', '외부 리뷰 실행', '다른 직원만 참여']) expect(screen.queryByText(text)).toBeNull()
+  })
+
+  it('shows active and pending work before the latest completion and folds older completed evidence', () => {
+    const run = makeRun('current', '현재 실행', [
+      { id: 'old', owner: 'staff-a', title: '이전 완료', status: '완료', finished: '2026-10-19T10:00:00Z', todos: [{ id: 'old-1', text: '보존할 완료 증거', done: true }] },
+      { id: 'pending', owner: 'staff-a', title: '다음 작업', status: '대기중' },
+      { id: 'latest', owner: 'staff-a', title: '최근 완료', status: '완료', finished: '2026-10-20T10:00:00Z' },
+      { id: 'stopped', owner: 'staff-a', title: '중단 작업', status: '중단' },
+      { id: 'active', owner: 'staff-a', title: '진행 작업', status: '진행중' },
+    ])
+    render(<EmployeeReport owner="staff-a" runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={Date.now()} />)
+    const currentList = screen.getByRole('tabpanel').querySelector(':scope > .employee-report__tasks')! as HTMLElement
+    expect(within(currentList).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
+      '작업 · 진행 작업', '작업 · 다음 작업', '작업 · 최근 완료', '작업 · 중단 작업',
+    ])
+    const summary = screen.getByText('이전 완료 업무 1개')
+    const folded = summary.closest('details')!
+    expect(folded.open).toBe(false)
+    fireEvent.click(summary)
+    expect(folded.open).toBe(true)
+    expect(within(folded).getByRole('heading', { name: '작업 · 이전 완료' })).toBeTruthy()
+    expect(within(folded).getByRole('img', { name: '완료' })).toBeTruthy()
+    expect(screen.getByText('보존할 완료 증거')).toBeTruthy()
+  })
+
+  it('labels aggregate work without implying missing actor model settings', () => {
+    const run = makeRun('current', '현재 실행', [{ id: 'gate', owner: 'staff-a', kind: 'aggregate', title: '승인 집계', status: '진행중' }])
+    render(<EmployeeReport owner="staff-a" runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={0} />)
+    expect(screen.getByText('집계 · 단일 작업자 설정 해당 없음')).toBeTruthy()
+    expect(screen.queryByText('모델 · 미보고')).toBeNull()
+    expect(screen.queryByText('노력 · 미보고')).toBeNull()
+    expect(screen.getByText('상태 · 진행중')).toBeTruthy()
+  })
+
   it.each([
     ['review-e2e', 'review', true],
     ['E2E Agent', 'review', false],

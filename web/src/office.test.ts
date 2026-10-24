@@ -37,6 +37,7 @@ describe('office roles and employees', () => {
   it('distinguishes completed work, first work, next work, stopped work and missing reports', () => {
     const run = makeRun({ state: { tasks: [
       task({ id: 'done', owner: 'backend-done', status: '완료' }),
+      task({ id: 'aggregate', owner: 'backend-done', kind: 'aggregate', status: '대기중' }),
       task({ id: 'first', owner: 'backend-first', status: '대기중' }),
       task({ id: 'prior', owner: 'backend-next', status: '완료' }),
       task({ id: 'next', owner: 'backend-next', status: '대기중' }),
@@ -169,6 +170,19 @@ describe('office room layout', () => {
 })
 
 describe('office scene changes', () => {
+  it('ignores aggregate transitions and owners when animating actors and returning reviews', () => {
+    const actor = task({ id: 'ACTOR', owner: 'backend-real', status: '진행중' })
+    const aggregate = task({ id: 'GATE', kind: 'aggregate', owner: 'backend-real', status: '대기중' })
+    const before = makeRun({ state: { tasks: [actor, aggregate] } })
+    const started = makeRun({ state: { tasks: [actor, { ...aggregate, status: '진행중' }] } })
+    const completed = makeRun({ state: { tasks: [actor, { ...aggregate, status: '완료' }] } })
+    expect(diffScenes(before, started)).toEqual([])
+    expect(diffScenes(started, completed)).toEqual([])
+    const review = { round: 1, reviewer: 'reviewer', verdict: 'CHANGES_REQUIRED' }
+    const rejected = makeRun({ state: { tasks: [actor, { ...aggregate, owner: 'aggregate-owner' }], reviews: [review] } })
+    expect(diffScenes(before, rejected)).toContainEqual({ type: 'return', from: 'reviewer', to: ['backend-real'] })
+  })
+
   it('walks when work starts and delivers only completed build/fix tasks', () => {
     const prev = makeRun({ state: { tasks: [task({ id: 'B', status: '대기중' }), task({ id: 'P', lane: 'plan', status: '진행중' }), task({ id: 'R', lane: 'review', status: '진행중' })] } })
     const next = makeRun({ state: { tasks: [task({ id: 'B', status: '진행중' }), task({ id: 'P', lane: 'plan', status: '완료' }), task({ id: 'R', lane: 'review', status: '완료' })] } })

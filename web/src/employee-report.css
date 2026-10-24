@@ -3,6 +3,9 @@
 .employee-report__tasks > li { padding: 20px 0; border-bottom: 1px solid var(--line); }
 .employee-report__tasks > li:last-child { padding-bottom: 0; border-bottom: 0; }
 .employee-report__task { min-width: 0; }
+.employee-report__completed { margin-top: 20px; }
+.employee-report__completed > summary { min-height: 44px; padding: 10px 0; color: var(--teal-deep); cursor: pointer; font-weight: 700; }
+.employee-report__completed > summary:focus-visible { outline: 3px solid var(--ochre); outline-offset: 3px; }
 .employee-report__task-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
 .employee-report__task-heading h3, .employee-report__task-heading h4 { flex: 1 1 240px; margin: 0; font-size: 21px; line-height: 1.4; overflow-wrap: anywhere; }
 .employee-report__status { flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--line-dark); border-radius: 4px; color: var(--ink-soft); background: var(--paper-light); font-size: 12px; font-weight: 700; }

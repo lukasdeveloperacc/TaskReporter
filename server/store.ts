@@ -198,7 +198,8 @@ export function openStore(file: string) {
         const owner = task.owner?.trim() || null
         const oldOwner = old?.owner?.trim() || null
         const priorClock = db.prepare('SELECT * FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null; observed_at: number; replied_at: number | null; todo_changed_at: number | null } | undefined
-        const transferred = (old !== undefined && oldOwner !== owner) || (priorClock !== undefined && priorClock.owner !== owner)
+        const kindChanged = old !== undefined && (old.kind ?? 'actor') !== (task.kind ?? 'actor')
+        const transferred = kindChanged || (old !== undefined && oldOwner !== owner) || (priorClock !== undefined && priorClock.owner !== owner)
         if (transferred) db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, task.id)
         const meaningful = old !== undefined && (old.status !== task.status || old.owner !== task.owner || old.note !== task.note || JSON.stringify(old.todos ?? []) !== JSON.stringify(task.todos ?? []))
         const observed = reset || !priorClock || transferred || meaningful ? stamp : priorClock.observed_at
@@ -211,14 +212,14 @@ export function openStore(file: string) {
           observed_at=excluded.observed_at, replied_at=excluded.replied_at, todo_changed_at=excluded.todo_changed_at`)
           .run(runId, task.id, owner, observed, repliedAt, todoChangedAt)
         const pending = db.prepare("SELECT id FROM checks WHERE run_id=? AND task_id=? AND status='pending'").get(runId, task.id)
-        const missing = !task.model?.trim() || !task.effort?.trim()
+        const missing = task.kind !== 'aggregate' && (!task.model?.trim() || !task.effort?.trim())
         const cooldown = !transferred && priorClock?.owner === owner && priorClock.replied_at !== null && stamp - priorClock.replied_at < STALE_MS
         const unfinished = (task.todos ?? []).filter((todo) => todo.done !== true)
         // Work moved (status/owner/note) but no TODO was ticked for a while: ask before the ticks pile up at the end.
         const workChanged = old !== undefined && (old.status !== task.status || old.owner !== task.owner || old.note !== task.note)
         const todoLag = unfinished.length > 0 && workChanged && stamp - todoChangedAt >= TODO_STALE_MS
         if (!ended && !pending && !cooldown && (missing || stamp - observed >= STALE_MS || todoLag)) {
-          const missingFields = [!task.model?.trim() && 'model', !task.effort?.trim() && 'effort'].filter(Boolean).join(', ')
+          const missingFields = missing ? [!task.model?.trim() && 'model', !task.effort?.trim() && 'effort'].filter(Boolean).join(', ') : ''
           const todoList = unfinished.length ? `미완료 TODO: ${unfinished.map((todo) => `${todo.id} (${todo.text ?? todo.id})`).join('; ')}. get_run으로 최신 TODO를 확인하고 실제 끝난 항목만 done:true로 보고하세요.` : ''
           const metadata = missingFields ? `누락: ${missingFields}. host/runtime에서 실제 값을 확인해 같은 task id의 patch.tasks로 보고하세요. 확인 불가하면 이유를 설명하고 값을 비워 두세요(추측 금지).` : ''
           const question = [
@@ -234,7 +235,7 @@ export function openStore(file: string) {
         db.prepare("UPDATE checks SET status='closed' WHERE run_id=? AND task_id=? AND status='pending'").run(runId, task.id)
         const priorClock = db.prepare('SELECT owner FROM task_clocks WHERE run_id=? AND task_id=?').get(runId, task.id) as { owner: string | null } | undefined
         const owner = task.owner?.trim() || null
-        if (priorClock && priorClock.owner !== owner) {
+        if (priorClock && (priorClock.owner !== owner || (before.get(task.id)?.kind ?? 'actor') !== (task.kind ?? 'actor'))) {
           db.prepare('UPDATE task_clocks SET owner=?, observed_at=?, replied_at=NULL WHERE run_id=? AND task_id=?')
             .run(owner, stamp, runId, task.id)
         }

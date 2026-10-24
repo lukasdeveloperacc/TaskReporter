@@ -4,6 +4,7 @@ import { getState, setProjectVisibility, subscribe } from './api.ts'
 import Lobby from './Lobby.tsx'
 import { AskDialog, DocNotice, DocumentPanel, Journal } from './Panels.tsx'
 import { Office } from './Office.tsx'
+import { ReviewResults } from './ReviewResults.tsx'
 import { orderProjectFloors } from './floors.ts'
 
 type Route = { runId: string | null }
@@ -161,6 +162,7 @@ export default function App() {
             {floorAsks.filter((ask) => ask.status === 'pending').map((ask) => <button className="ask-ticket" type="button" key={ask.id} onClick={() => setSelectedAskId(ask.id)}><span className="ask-ticket__bell" aria-hidden="true">!</span><span><strong>대표실 결재 대기</strong><small>{ask.question}</small></span><span>열기</span></button>)}
           </section>
           <aside className="run-panels" aria-label="프로젝트 기록과 문서">
+            <div className="panel-section"><ReviewResults reviews={selectedRun.state.reviews ?? []} /></div>
             <DocumentPanel run={selectedRun} revision={documentRevision} />
             <Journal key={activeProject.path} runs={endedRuns} onOpenSnapshot={() => undefined} />
           </aside>

@@ -259,7 +259,8 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     const seat = seatPosition(departmentByKey.get(employee.department)!, employee.deskIndex)
     return { employee, point: { x: seat.x * TILE, y: seat.y * TILE } }
   })
-  const inspectedEmployeeAvailable = inspectedOwner !== null && employeeAnchors.some(({ employee }) => employee.name === inspectedOwner)
+  const inspectedEmployee = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee
+  const inspectedEmployeeAvailable = inspectedEmployee !== undefined
   const inspectedTab = visitorPanel?.kind === 'employee' ? visitorPanel.tab : null
   const walkingEmployee = employeeAnchors.find(({ employee }) => employee.name === walkingOwner)
   const walkingEmployeeRoom = geometry.rooms.find(({ key }) => key === walkingEmployee?.employee.department)
@@ -551,6 +552,8 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : employee.lastCompletedTask ? ` · 최근 완료 · ${employee.lastCompletedTask.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px` } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : employee.name}</span>
             <small className="office-employee-status">{employee.statusLabel}</small>
+            <small className="office-model">모델 · {employee.model || '미보고'}</small>
+            <small className="office-effort">노력 · {employee.effort || '미보고'}</small>
             {!employee.task && employee.lastCompletedTask && <small className="office-completed-task" title={employee.lastCompletedTask.title}>완료 · {employee.lastCompletedTask.title}</small>}
             {todos?.length ? <small className="office-todo-progress">TODO {todos.filter((todo) => todo.done).length}/{todos.length}</small> : null}
           </span>
@@ -587,7 +590,12 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
     </div>}
     {inspectedOwner !== null && <div className="visitor-inspector-backdrop"><aside className="visitor-inspector" role="dialog" aria-modal="true" aria-label="직원 업무 살펴보기" onKeyDown={(event) => {
       if (event.key === 'Tab') {
-        const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), summary, [tabindex="0"]')]
+        const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), summary, [tabindex="0"]')].filter((element) => {
+          for (let parent = element.parentElement; parent && parent !== event.currentTarget; parent = parent.parentElement) {
+            if (parent instanceof HTMLDetailsElement && !parent.open && parent.querySelector('summary') !== element) return false
+          }
+          return true
+        })
         const first = focusable[0]
         const last = focusable.at(-1)
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
@@ -608,8 +616,11 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         setVisitorPanel({ ...visitorPanel, tab: 'history' })
       } else closeVisitorPanel()
     }}>
-      {(() => { const selected = employeeAnchors.find(({ employee }) => employee.name === inspectedOwner)?.employee; return selected ? <><h2>{selected.name} 업무</h2><p>부서 · {selected.department}</p><p>상태 · {selected.statusLabel}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속 · Esc 닫기</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <><h2>직원을 찾을 수 없습니다</h2><p>최신 보고에서 해당 직원이 사라졌습니다.</p></> })()}
-      <button ref={visitorInspectorCloseRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
+      <header className="visitor-inspector__header">
+        <h2>{inspectedEmployee ? `${inspectedEmployee.name} 업무` : '직원을 찾을 수 없습니다'}</h2>
+        <button ref={visitorInspectorCloseRef} type="button" onClick={() => closeVisitorPanel()}>닫기</button>
+      </header>
+      {inspectedEmployee ? <><p>부서 · {inspectedEmployee.department}</p><p>상태 · {inspectedEmployee.statusLabel}</p><p className="visitor-inspector__help">Enter 기록 → Enter 닫고 계속 · Esc 닫기</p><EmployeeReport owner={inspectedOwner} runs={projectRuns} currentRunId={run.id} tab={visitorPanel?.kind === 'employee' ? visitorPanel.tab : 'current'} onTabChange={(tab) => setVisitorPanel((panel) => panel?.kind === 'employee' ? { ...panel, tab } : panel)} now={now} /></> : <p>최신 보고에서 해당 직원이 사라졌습니다.</p>}
     </aside></div>}
   </section>
 }
