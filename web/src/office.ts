@@ -1,8 +1,8 @@
 import { STALE_MS, type RunView, type Task } from '../../shared/contract.ts'
-import roles from './roles.json' with { type: 'json' }
+import { actorAssignments, departmentOf, type Department, type DepartmentLayout } from '../../shared/office-roles.ts'
+import { roles } from '../../shared/office-roles.ts'
+export type { Department, DepartmentLayout } from '../../shared/office-roles.ts'
 
-export type Department = (typeof roles.departments)[number]['key']
-export type DepartmentLayout = (typeof roles.departments)[number]
 export type EmployeeState = 'typing' | 'idle' | 'away' | 'gone'
 export type EmployeeView = {
   name: string
@@ -13,6 +13,7 @@ export type EmployeeView = {
   effort: string | null
   frame: [number, number]
   task?: { id: string; title: string; elapsedMin: number }
+  lastCompletedTask?: { id: string; title: string }
   state: EmployeeState
 }
 export type OfficeView = { employees: EmployeeView[] }
@@ -25,11 +26,7 @@ export type Scene =
   | { type: 'stamp'; reviewer: string; round: number; verdict: string | undefined }
   | { type: 'return'; from: string; to: string[] }
 
-export function departmentOf(owner: string, lane?: string): Department {
-  if (lane === 'plan') return '회의실'
-  const mapping = roles.owners.find(({ match }) => match.endsWith('*') ? owner.startsWith(match.slice(0, -1)) : match === owner)
-  return (mapping?.department ?? '임시 자리') as Department
-}
+export { departmentOf }
 
 export function rankOf(model?: string): string | null {
   if (!model) return null
@@ -70,15 +67,7 @@ const taskTitle = (task: Task) => task.title || task.id
 
 export function buildOffice(run: RunView, now: number): OfficeView {
   const tasks = run.state.tasks ?? []
-  const byName = new Map<string, { task?: Task; lane?: string; model?: string; effort?: string }>()
-  byName.set('leader', {})
-  for (const task of tasks) {
-    if (!task.owner) continue
-    const current = byName.get(task.owner) ?? {}
-    if (task.status === '진행중') Object.assign(current, { task, lane: task.lane, model: task.model, effort: task.effort })
-    else if (!current.task && (task.model !== undefined || task.effort !== undefined)) Object.assign(current, { lane: task.lane, model: task.model, effort: task.effort })
-    byName.set(task.owner, current)
-  }
+  const byName = actorAssignments(tasks)
   for (const review of run.state.reviews ?? []) byName.set(review.reviewer, byName.get(review.reviewer) ?? {})
 
   const deskCounts = new Map<Department, number>()
@@ -94,6 +83,7 @@ export function buildOffice(run: RunView, now: number): OfficeView {
         name, department, deskIndex, model: assignment.model ?? null, rank: rankOf(assignment.model), effort: assignment.effort ?? null,
         frame: characterFrame(name),
         ...(assignment.task ? { task: { id: assignment.task.id, title: taskTitle(assignment.task), elapsedMin: elapsed } } : {}),
+        ...(assignment.lastCompletedTask ? { lastCompletedTask: { id: assignment.lastCompletedTask.id, title: taskTitle(assignment.lastCompletedTask) } } : {}),
         state,
       }
     }),

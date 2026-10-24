@@ -112,6 +112,9 @@ export function openStore(file: string) {
     listActiveRuns(): RunRow[] {
       return (db.prepare('SELECT * FROM runs WHERE ended_at IS NULL ORDER BY last_report_at DESC, id').all() as StoredRun[]).map(runRow)
     },
+    listActiveRunsForProject(projectPath: string): RunRow[] {
+      return (db.prepare('SELECT * FROM runs WHERE project_path=? AND ended_at IS NULL ORDER BY last_report_at DESC, id').all(projectPath) as StoredRun[]).map(runRow)
+    },
     snapshot(docAccessible: (run: RunRow) => boolean): StateSnapshot {
       const projects = db.prepare('SELECT * FROM projects ORDER BY path').all() as {
         path: string; name: string; in_workspace: number; hidden: number; created_at: string

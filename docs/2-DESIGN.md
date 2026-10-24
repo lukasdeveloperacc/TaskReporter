@@ -25,10 +25,10 @@
 
 ## 구현 계약
 
-React DOM + CSS sprites로 씬을 구현한다. 역할·부서·직급 매핑은 `web/src/roles.json` 데이터가 담당한다. 기본 이동은 직선 CSS transition이며 typing/doze는 CSS keyframes다. 원격 폰트·이미지 생성은 필요하지 않다. Kenney Roguelike Indoors와 Roguelike Characters의 원본 라이선스는 배포 에셋과 함께 보존한다.
+React DOM + CSS sprites로 씬을 구현한다. 역할·부서·직급 매핑은 `shared/roles.json` 데이터가 담당한다. 기본 이동은 직선 CSS transition이며 typing/doze는 CSS keyframes다. 원격 폰트·이미지 생성은 필요하지 않다. Kenney Roguelike Indoors와 Roguelike Characters의 원본 라이선스는 배포 에셋과 함께 보존한다.
 
 이 문서는 확정 브리프이며 픽셀 단위 시안이나 브라우저 검수 통과 기록이 아니다. 실제 구현 토큰은 `web/src/app.css`와 `web/src/office.css`를 함께 확인한다.
 
 ## 관련 문서
 
-화면 동작·상태는 [진행 보고와 사무실](requirements/progress-office.md), [결재](requirements/decisions-integration.md), [기획서](requirements/documents.md)를 따른다. 실제 토큰과 레이아웃은 [app.css](../web/src/app.css), [office.css](../web/src/office.css), 역할 데이터는 [roles.json](../web/src/roles.json)에서 확인한다. 별도 HTML 화면 정의서는 현재 없다.
+화면 동작·상태는 [진행 보고와 사무실](requirements/progress-office.md), [결재](requirements/decisions-integration.md), [기획서](requirements/documents.md)를 따른다. 실제 토큰과 레이아웃은 [app.css](../web/src/app.css), [office.css](../web/src/office.css), 역할 데이터는 [roles.json](../shared/roles.json)에서 확인한다. 별도 HTML 화면 정의서는 현재 없다.

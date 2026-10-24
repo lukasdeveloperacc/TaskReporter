@@ -8,6 +8,16 @@
 
 report의 선택 입력 include_state는 boolean이다. false면 응답 state만 생략하고 run_id·ended_at·doc_changes·checks·asks는 유지한다. 미지정/true는 기존 응답이다. get_run은 기존 필드와 함께 전체 state를 반환한다. 스킬은 tools/list의 report.inputSchema.properties.include_state로 지원을 확인한다. DB·기본 응답 정책은 바꾸지 않는다.
 
+## 신규/재개 전 탐색 연동
+
+상태: 로컬 구현·전체 자동 검사·실제 브라우저 확인 완료. 결과는 [변경 021](../changes/021-office-mcp-discovery.md)과 [스킬 협업 023](../changes/023-office-mcp-client-coordination.md)에서 연결한다. 클라이언트는 `tools/list`에서 지원을 확인하고 신규 실행을 생성하거나 기존 실행을 재개하기 전에 `get_office_rules({})`와 `get_active_runs({project_path})`를 읽는다. 기존 sidecar의 run_id도 활성 실행 목록·실제 작업과 대조한다. 같은 작업의 실행에만 확인한 run_id를 재사용하고 독립 작업은 새 실행으로 보고한다. 탐색 자체는 실행을 재개하거나 다른 실행을 종료하지 않는다.
+
+report의 추가 응답 `placements`는 이번 patch의 task ID를 병합 후 상태에서 계산한다. get_run은 모든 task의 placements와 전체 state를 반환한다. include_state false에서도 placements는 유지한다. fallback이면 owner 규칙과 실제 담당자를 확인하고 필요한 경우 명시적으로 수정한다. 배정 값은 데이터에서 계산한 결과이며 화면에 캐릭터가 표시되었다는 증거가 아니다. 경로·규칙·미배정·동일 owner의 유효 lane 의미는 [보고 요구사항](progress-office.md#사무실-탐색과-배정-확인)을 따른다.
+
+최초 생성 report의 선택 응답 `active_runs`와 `get_run.last_report_at`은 [변경 023](../changes/023-office-mcp-client-coordination.md)의 스킬 협업 계약이다. 클라이언트는 도구·필드 지원 여부를 확인하며 구버전의 필드 생략을 다른 실행이 없다는 증거로 해석하지 않는다. 표시용 owner와 native 실행 식별자는 구분하고 추가 요구의 기존 작업 지속 여부·계획 반영은 보고자가 설명한다. 외부 스킬은 PersonalAgentPlugins의 별도 커밋으로 관리한다.
+
+외부 [PersonalAgentPlugins의 basic-team](https://github.com/lukasdeveloperacc/PersonalAgentPlugins)에 이 순서를 적용하도록 권고하는 안내다. 이번 저장소 변경은 외부 스킬 소스·설치 캐시를 수정하지 않으며 호스트나 기존 설치본의 자동 준수를 보장하지 않는다. 탐색 도구 없는 구버전 서버에서는 기존 계약을 유지하고 탐색 성공으로 보고하지 않는다. 실제 연결 실패의 HTML 폴백은 기존 [규칙](#스킬-연결과-폴백)을 따른다.
+
 ## run 회고
 
 로컬 구현·검증 상태다(배포 전). 범위·검증은 [변경 017](../changes/017-run-retro.md)을 따른다. 목적은 basic-* 스킬 실행이 끝날 때 스킬 지시·도구·프로세스에서 막힌 점을 모아 이후 스킬·MCP 개선의 근거로 쓰는 것이다. 코드 결함은 리뷰 기록에 남기며 회고 대상이 아니다.

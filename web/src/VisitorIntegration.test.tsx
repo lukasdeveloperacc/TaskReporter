@@ -5,7 +5,7 @@ import type { AskView, ProjectView, RunView, StateSnapshot } from '../../shared/
 import App from './App.tsx'
 import { getDoc, getState, subscribe } from './api.ts'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 import { roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
 import { moveWithinArea, nearestDoor } from './roomNavigation.ts'
 

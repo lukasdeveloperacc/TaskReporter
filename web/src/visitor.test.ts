@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 import { layoutOffice, OFFICE_HEIGHT, OFFICE_WIDTH, seatPosition, type EmployeeView } from './office.ts'
 import { ELEVATOR_RECT, INTERACTION_RADIUS, moveVisitor, nearestInteraction, roomGeometry, VISITOR_SPAWN, visitorSpriteBounds, type Direction, type Point } from './visitor.ts'
 import { findVisitorPath, roomKeyAt } from './roomNavigation.ts'

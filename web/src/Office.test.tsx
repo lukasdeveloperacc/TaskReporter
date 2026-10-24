@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import type { ComponentProps } from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
 import { ELEVATOR_RECT, roomGeometry } from './visitor.ts'
 import { findVisitorPath } from './roomNavigation.ts'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 
 const stamp = '2026-10-19T12:00:00.000Z'
 const askList: AskView[] = []
@@ -26,12 +26,16 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 describe('Office scene controls and coordinates', () => {
   it('shows TODO counts on task cards and leaves detail Enter to the native summary', async () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() })
-    const run = makeRun([{ ...task('FE', 'frontend-1', 'build', '진행중'), todos: [
-      { id: 'FE-1', text: '계약 확인', done: true },
-      { id: 'FE-2', text: '화면 구현', phase: '구현', detail: '키보드로 상세 열기' },
-    ] }])
+    const run = makeRun([
+      { ...task('FE-DONE', 'frontend-1'), title: '이전 완료 작업', finished: stamp },
+      { ...task('FE', 'frontend-1', 'build', '진행중'), todos: [
+        { id: 'FE-1', text: '계약 확인', done: true },
+        { id: 'FE-2', text: '화면 구현', phase: '구현', detail: '키보드로 상세 열기' },
+      ] },
+    ])
     render(<StaticOffice run={run} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     expect(document.querySelector('[data-employee="frontend-1"]')?.textContent).toContain('TODO 1/2')
+    expect(document.querySelector('[data-employee="frontend-1"]')?.textContent).not.toContain('이전 완료 작업')
     fireEvent.click(screen.getByRole('button', { name: 'frontend-1 현재 업무 보기' }))
     const dialog = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' }, { timeout: 2000 })
     const summary = dialog.querySelector('summary')!
@@ -40,6 +44,19 @@ describe('Office scene controls and coordinates', () => {
     fireEvent(summary, enter)
     expect(enter.defaultPrevented).toBe(false)
     expect(screen.getByRole('tab', { name: '현재 업무' }).getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('shows a compact latest completion while idle and exposes its full title in employee details', async () => {
+    const title = '완료한 화면 작업의 전체 제목이 길게 이어집니다'
+    const run = makeRun([{ ...task('FE-DONE', 'frontend-1'), title, finished: stamp }])
+    render(<StaticOffice run={run} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    const employee = screen.getByRole('button', { name: 'frontend-1 현재 업무 보기' })
+    expect(employee.getAttribute('data-state')).toBe('idle')
+    expect(employee.textContent).toContain(`완료 · ${title}`)
+    fireEvent.click(employee)
+    const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' }, { timeout: 2000 })
+    fireEvent.click(within(inspector).getByRole('tab', { name: '업무 기록' }))
+    expect(inspector.textContent).toContain(title)
   })
 
   it('parks idle employees in distinct department stations, including the temporary desk', () => {
@@ -80,6 +97,24 @@ describe('Office scene controls and coordinates', () => {
     expect(screen.queryByLabelText('이동 중인 서류')).toBeNull()
   })
 
+  it('cancels a pending delivery scene when its run ends and leaves staff inspectable', () => {
+    vi.useFakeTimers()
+    const active = makeRun([task('B-1', 'backend-1', 'build', '진행중')])
+    const { rerender } = render(<StaticOffice run={active} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
+    const completed = makeRun([task('B-1', 'backend-1', 'build', '완료')], { last_report_at: '2026-10-19T12:00:01.000Z' })
+    rerender(<StaticOffice run={completed} asks={askList} now={Date.parse(stamp) + 1000} onOpenAsk={() => {}} />)
+    expect(screen.getByLabelText('이동 중인 서류')).toBeTruthy()
+    const ended = { ...completed, ended_at: '2026-10-19T12:00:02.000Z' }
+    rerender(<StaticOffice run={ended} asks={askList} now={Date.parse(stamp) + 2000} onOpenAsk={() => {}} />)
+    const employee = screen.getByRole('button', { name: 'backend-1 현재 업무 보기' })
+    expect(employee.getAttribute('data-state')).toBe('gone')
+    expect((employee as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByLabelText('이동 중인 서류')).toBeNull()
+    act(() => { vi.advanceTimersByTime(2000) })
+    expect(screen.queryByLabelText('이동 중인 서류')).toBeNull()
+    expect(document.querySelector('.office-scene')?.classList.contains('office-scene--off')).toBe(true)
+  })
+
   it('keeps the full office at readable size for scrolling and closes with Escape', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
@@ -116,7 +151,8 @@ describe('Office scene controls and coordinates', () => {
   it('keeps the CEO character distinct from the internal leader employee', () => {
     render(<StaticOffice run={makeRun()} asks={askList} now={Date.parse(stamp)} onOpenAsk={() => {}} />)
     expect(screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' })).toBeTruthy()
-    expect(document.querySelector('[data-office-role="representative"] .office-name')?.textContent).toBe('대표 · 나')
+    expect(document.querySelector('[data-office-role="representative"] .office-name')?.textContent).toBe('대표 · 나 (사용자)')
+    expect(screen.getByRole('img', { name: '대표 · 나, 대표 캐릭터' }).getAttribute('aria-description')).toContain('보고된 팀 작업자가 아닙니다')
     const leader = document.querySelector('[data-employee="leader"]')
     expect(leader?.querySelector('.office-name')?.textContent).toBe('부장 · leader')
     expect(leader?.getAttribute('data-employee')).toBe('leader')
@@ -211,9 +247,9 @@ describe('Office scene controls and coordinates', () => {
     expect(document.querySelector('[data-employee="leader"] .office-bubble')?.getAttribute('tabindex')).toBeNull()
 
     fireEvent.keyDown(toggle, { key: 'Tab', shiftKey: true })
-    const elevator = screen.getByRole('button', { name: '엘리베이터 층간 이동' })
-    expect(document.activeElement).toBe(elevator)
-    fireEvent.keyDown(elevator, { key: 'Tab' })
+    const lastEmployee = [...document.querySelectorAll<HTMLButtonElement>('.office-employee')].at(-1)!
+    expect(document.activeElement).toBe(lastEmployee)
+    fireEvent.keyDown(lastEmployee, { key: 'Tab' })
     expect(document.activeElement).toBe(toggle)
   })
 
@@ -507,6 +543,9 @@ describe('Office scene controls and coordinates', () => {
     const globalCss = readFileSync('web/src/app.css', 'utf8')
     expect(globalCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?transition-duration:\s*\.01ms\s*!important/)
     expect(css).toMatch(/\.office-scroll--visitor\s*\{[^}]*transition:\s*none;/)
+    expect(css).toMatch(/\.office-employee--gone\s*\{[^}]*cursor:\s*pointer;/)
+    expect(css).toMatch(/\.office-scene--off\s+\.office-employee\s*\{[^}]*transition:\s*none;/)
+    expect(css).toMatch(/\.office-scene--off\s+\.office-employee--typing\s+\.office-person,\s*\.office-scene--off\s+\.office-representative--walking\s+\.office-person\s*\{[^}]*animation:\s*none;/)
   })
 
   it('keeps the scrollable overview walkable and guards its panels, pause controls, and approval focus', async () => {

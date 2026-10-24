@@ -56,6 +56,21 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   }
 
   useEffect(() => {
+    if (run.ended_at) {
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+      if (travelFrame.current !== undefined) window.cancelAnimationFrame(travelFrame.current)
+      if (walkFrame.current !== undefined) window.cancelAnimationFrame(walkFrame.current)
+      timer.current = undefined
+      travelFrame.current = undefined
+      walkFrame.current = undefined
+      queue.current = []
+      setScene(null)
+      setSceneTraveling(false)
+      setWalkers(new Set())
+      setWalkingDestination(null)
+      previousRun.current = run
+      return
+    }
     const changes = diffScenes(previousRun.current, run)
     queue.current = [...queue.current, ...changes].slice(-MAX_SCENES)
     const arriving = new Set(changes.filter((item) => item.type === 'walk').map((item) => item.who))
@@ -240,7 +255,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
   const elevatorOpen = visitorPanel?.kind === 'elevator'
   const firstAvailableFloor = floors.find((floor) => !floor.disabled && !floor.current)
   const inspectedOwner = visitorPanel?.kind === 'employee' ? visitorPanel.owner : null
-  const employeeAnchors = office.employees.filter((employee) => employee.state !== 'gone').map((employee) => {
+  const employeeAnchors = office.employees.map((employee) => {
     const seat = seatPosition(departmentByKey.get(employee.department)!, employee.deskIndex)
     return { employee, point: { x: seat.x * TILE, y: seat.y * TILE } }
   })
@@ -500,9 +515,9 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
         {visibleInterior && department.key === '대표실' && <span className="office-plant" aria-hidden="true" />}
         {visitorEnabled && <button type="button" className="office-door-sign" aria-label={`${department.name} 방으로 이동`} title={`${department.name} 방으로 이동`} disabled={interactionBlocked || visitorPanel !== null} onClick={() => requestRoom(department.key)}>↓ {department.name} 방으로 이동</button>}
       </section>})}
-      <div className={`office-representative${walkingDestination !== null ? ' office-representative--walking' : ''}`} data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" style={visitorSpriteBounds(visitorPoint)}>
+      <div className={`office-representative${walkingDestination !== null ? ' office-representative--walking' : ''}`} data-office-role="representative" role="img" aria-label="대표 · 나, 대표 캐릭터" aria-description="사용자가 조작하는 아바타입니다. 보고된 팀 작업자가 아닙니다." title="사용자가 조작하는 아바타" style={visitorSpriteBounds(visitorPoint)}>
         <Sprite frame={characterFrame('대표 · 나')} className="office-person" />
-        <span className="office-name">대표 · 나</span>
+        <span className="office-name">대표 · 나 (사용자)</span>
       </div>
       {office.employees.filter((employee) => overviewOpen || !visitorEnabled || employee.department === activeRoomKey).map((employee) => {
         const todos = run.state.tasks?.find((task) => task.id === employee.task?.id)?.todos
@@ -523,7 +538,7 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           : walkers.has(employee.name)
           ? { x: 13 * TILE + (office.employees.findIndex(({ name }) => name === employee.name) % 6) * 56, y: 13 * TILE + Math.floor(office.employees.findIndex(({ name }) => name === employee.name) / 6) * 56 }
           : travelsThisScene && sceneTraveling ? travelTarget : isWorking || employee.state === 'away' || travelsThisScene ? position : parked
-        return <button type="button" key={employee.name} className={`office-employee office-employee--${employee.state}${visitorEnabled ? ' office-employee--visitor' : ''}${walkingOwner === employee.name ? ' office-employee--destination' : ''}`} data-employee={employee.name} data-state={employee.state} aria-label={`${employee.name === 'leader' ? '부장 · leader' : employee.name} 현재 업무 보기`} aria-haspopup="dialog" disabled={employee.state === 'gone' || interactionBlocked || visitorPanel !== null} onClick={(event) => {
+        return <button type="button" key={employee.name} className={`office-employee office-employee--${employee.state}${visitorEnabled ? ' office-employee--visitor' : ''}${walkingOwner === employee.name ? ' office-employee--destination' : ''}`} data-employee={employee.name} data-state={employee.state} aria-label={`${employee.name === 'leader' ? '부장 · leader' : employee.name} 현재 업무 보기`} aria-haspopup="dialog" disabled={interactionBlocked || visitorPanel !== null} onClick={(event) => {
           if (visitorPanel !== null) return
           if (walkingDestination?.kind === 'employee' && walkingDestination.owner === employee.name) return
           interactionTriggerRef.current = event.currentTarget
@@ -533,16 +548,17 @@ export function Office({ run, projectRuns = [run], asks, now, onOpenAsk, visitor
           if (visitorEnabled) focusMap()
         }} style={{ left: at.x, top: at.y, '--employee-color': desk.color, '--walk-key': motionKey } as CSSProperties}>
           <Sprite frame={employee.frame} className="office-person" />
-          <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px` } as CSSProperties}>
+          <span className="office-bubble office-bubble--staff" title={`${employee.name}${employee.task ? ` · ${employee.task.title}` : employee.lastCompletedTask ? ` · 최근 완료 · ${employee.lastCompletedTask.title}` : ''} · 모델 ${employee.model ?? '미보고'} · 노력 ${employee.effort ?? '미보고'}`} style={{ '--bubble-width': `${BUBBLE_WIDTH}px` } as CSSProperties}>
             <span className="office-name">{employee.name === 'leader' ? '부장 · leader' : employee.name}</span>
             <small className="office-employee-status">{employee.state === 'typing' ? '작업 중' : employee.state === 'away' ? '자리 비움' : employee.state === 'gone' ? '퇴근' : '대기'}</small>
+            {!employee.task && employee.lastCompletedTask && <small className="office-completed-task" title={employee.lastCompletedTask.title}>완료 · {employee.lastCompletedTask.title}</small>}
             {todos?.length ? <small className="office-todo-progress">TODO {todos.filter((todo) => todo.done).length}/{todos.length}</small> : null}
           </span>
           <span className="office-desk" aria-hidden="true" style={{ left: x - at.x, top: y - at.y }} />
           <span className="office-chair" aria-hidden="true" style={{ left: x - at.x, top: y - at.y + 37 }} />
         </button>
       })}
-      {(overviewOpen || !visitorEnabled || activeRoomKey !== null) && scene && (scene.type === 'deliver' || scene.type === 'return') && (() => {
+      {!run.ended_at && (overviewOpen || !visitorEnabled || activeRoomKey !== null) && scene && (scene.type === 'deliver' || scene.type === 'return') && (() => {
         const audit = { x: (departmentByKey.get('감사팀')!.x + 4) * TILE, y: (departmentByKey.get('감사팀')!.y + 2) * TILE }
         const origin = scene.type === 'deliver' ? deskPositions.get(scene.who) ?? audit : deskPositions.get(scene.from) ?? audit
         const destination = scene.type === 'deliver' ? audit : deskPositions.get(scene.to[0]) ?? audit

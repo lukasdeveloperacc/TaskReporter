@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 import { roomGeometry, type Point } from './visitor.ts'
 import { RoomMiniMap } from './RoomMiniMap.tsx'
 

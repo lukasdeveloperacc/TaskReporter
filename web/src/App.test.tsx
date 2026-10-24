@@ -70,6 +70,20 @@ describe('App route integration', () => {
     await waitFor(() => expect(screen.getByTestId('office-run').textContent).toBe('older'))
   })
 
+  it('distinguishes equal run titles and preserves selection after another run reports', async () => {
+    const sameTitleProject = { ...project, runs: [older, newer].map((item) => ({ ...item, title: '같은 제목' })) }
+    await renderApp(snapshot({ projects: [sameTitleProject] }), '#/run/older')
+    const picker = await screen.findByRole('combobox', { name: '진행 중 run' })
+    expect(screen.getByRole('option', { name: '같은 제목 · older' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: '같은 제목 · newer' })).toBeTruthy()
+    expect(screen.getByText('선택한 실행').parentElement?.textContent).toContain('같은 제목 · older')
+    vi.mocked(getState).mockResolvedValue(snapshot({ projects: [{ ...sameTitleProject, runs: sameTitleProject.runs.map((item) => item.id === 'newer' ? { ...item, last_report_at: '2026-10-24T00:00:00Z' } : item) }] }))
+    act(() => stateChanged?.())
+    await waitFor(() => expect(getState).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('office-run').textContent).toBe('older')
+    expect((picker as HTMLSelectElement).value).toBe('older')
+  })
+
   it.each([false, true])('preserves overview mode across floor and run remounts (expanded: %s)', async (expanded) => {
     const betaRuns = [run('beta-newer', '2026-10-19T07:40:00.000Z'), run('beta-older', '2026-10-19T07:10:00.000Z')]
     const betaProject = { ...project, path: '/workspace/beta', name: 'beta', runs: betaRuns.map((item) => ({ ...item, project_path: '/workspace/beta' })) }

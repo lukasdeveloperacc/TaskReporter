@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from 'react'
 import type { RunView, Task } from '../../shared/contract.ts'
+import { actorAssignments, resolveDepartment } from '../../shared/office-roles.ts'
 import './employee-report.css'
 
 export type ReportTab = 'current' | 'history'
@@ -84,6 +85,7 @@ function TaskReport({ task, now, headingLevel = 3 }: { task: Task; now: number; 
 export function EmployeeReport({ owner, runs, currentRunId, tab, onTabChange, now }: EmployeeReportProps) {
   const currentRun = runs.find((run) => run.id === currentRunId)
   const currentTasks = currentRun?.state.tasks?.filter((task) => task.owner === owner) ?? []
+  const placement = resolveDepartment(owner, actorAssignments(currentRun?.state.tasks ?? []).get(owner)?.lane)
   const history = runs
     .filter((run) => run.project_path === currentRun?.project_path && run.state.tasks?.some((task) => task.owner === owner))
     .map((run, index) => ({ run, index, timestamp: runTimestamp(run) }))
@@ -112,6 +114,9 @@ export function EmployeeReport({ owner, runs, currentRunId, tab, onTabChange, no
     <div id="employee-report-panel" role="tabpanel" aria-labelledby={`employee-report-tab-${tab}`} tabIndex={0}>
       {tab === 'current' ? <>
         <p>이번 실행에서 맡은 업무와 체크리스트입니다.</p>
+        <p>실행 ID · {currentRunId} · 마지막 보고 · {dateLabel(currentRun?.last_report_at) ?? '미보고'}</p>
+        {placement.matched_by === 'fallback' && <p>임시 자리 · 보고된 owner “{owner}”에 맞는 부서 규칙이 없습니다. 보고자가 owner를 확인해야 합니다.</p>}
+        <p>작업 상태는 마지막 보고 기준입니다. 실제 에이전트의 실행 여부와 다를 수 있습니다.</p>
         {currentTasks.length ? <ul className="employee-report__tasks">{currentTasks.map((task, index) => <li key={`${task.id}-${index}`}><TaskReport task={task} now={now} /></li>)}</ul> : <><p>현재 진행 중인 작업이 없습니다.</p><p>모델 · 미보고</p><p>노력 · 미보고</p></>}
       </> : <>
         <p>보고한 업무를 최근 순서로 모았습니다.</p>

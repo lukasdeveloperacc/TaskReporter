@@ -6,7 +6,8 @@ import express from 'express'
 import { existsSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import * as z from 'zod/v4'
-import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type AskArgs, type AskResult, type OpenTodos, type ProgressData, type ReportArgs } from '../shared/contract.ts'
+import { ASK_WAIT_MS, CLOSED, LANES, RETRO_CATEGORIES, RETRO_TASK_ID, REVIEWERS, STATUSES, SSE_EVENTS, type ActiveRunSummary, type AskArgs, type AskResult, type OpenTodos, type ProgressData, type ReportArgs, type Task, type TaskPlacement } from '../shared/contract.ts'
+import { actorAssignments, resolveDepartment, roles } from '../shared/office-roles.ts'
 import { apply, INIT } from './progress.ts'
 import { docDiff, inWorkspace, readDoc, resolveDoc, watchDoc } from './docs.ts'
 import { openStore, type AskRow, type RunRow } from './store.ts'
@@ -57,6 +58,16 @@ function toolError(message: string): never {
 
 function jsonResult(value: Record<string, unknown>) {
   return { structuredContent: value, content: [{ type: 'text' as const, text: JSON.stringify(value) }] }
+}
+
+function taskPlacements(tasks: Task[]): TaskPlacement[] {
+  const assignments = actorAssignments(tasks)
+  return tasks.map((task) => {
+    const owner = task.owner || null
+    const assignment = owner ? assignments.get(owner) : undefined
+    const resolved = resolveDepartment(owner ?? undefined, assignment?.lane)
+    return { task_id: task.id, owner, department: resolved.department, matched_by: resolved.matched_by }
+  })
 }
 
 function activeDoc(run: RunRow, workspaceRoot: string): string | null {
@@ -222,15 +233,22 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     else if (previousResolved !== newResolved || !watchers.has(run.id)) startWatcher(run)
     for (const id of closedIds) settleWaiters(id, { error: new Error('ask closed') })
     broadcast(SSE_EVENTS.changed)
+    const touchedIds = new Set(args.patch.tasks?.map((task) => task.id) ?? [])
     return {
       checks: db.checks(run.id, true),
       asks: db.asks(run.id).filter((ask) => ask.status === 'answered')
         .map((ask) => ({ ask_id: ask.id, status: 'answered' as const, answer: ask.answer! })),
       open_todos: openTodos(run.state, args.patch.tasks?.map((task) => task.id) ?? []),
       run_id: run.id, doc_changes: changes, ended_at: run.ended_at,
+      placements: taskPlacements(run.state.tasks ?? []).filter((placement) => touchedIds.has(placement.task_id)),
+      ...(!existing ? { active_runs: activeRuns(projectPath) } : {}),
       ...(args.include_state === false ? {} : { state: run.state }),
     }
   }
+
+  const activeRuns = (projectPath: string): ActiveRunSummary[] => db.listActiveRunsForProject(projectPath).map((run) => ({
+    run_id: run.id, title: run.state.title ?? basename(projectPath), stage: run.state.stage ?? null, last_report_at: run.last_report_at,
+  }))
 
   const askTool = async (args: AskArgs, extra: { signal?: AbortSignal }, response: Response): Promise<AskResult> => {
     let askId = args.ask_id
@@ -259,7 +277,9 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
     'close_ask_ids는 patch 안이 아닌 report 최상위에 넣으세요.',
     'stage는 계획·구현·리뷰·수정·마무리·완료·중단 중 하나로 시작하고 상세는 공백 뒤에 쓰세요.',
     'tasks는 id, decisions는 title, reviews는 round+reviewer로 merge됩니다. task.todos도 같은 작업 안에서 id로 보낸 필드만 merge하고 미전송 항목과 최초 순서를 유지합니다. 새 todo의 text 생략 시 id를 쓰며, 체크 예: tasks:[{id:"FE",todos:[{id:"FE-2",done:true}]}].',
-    'task의 owner가 사무실 좌석을 정합니다. 상태 조회에는 읽기 전용 get_run을 사용하세요.',
+    'task의 owner와 shared office rules가 배우 배정을 정합니다. report/get_run placements는 데이터에서 계산한 배정이며 브라우저 렌더링이나 실제 좌석 표시 증거가 아닙니다. fallback/unassigned를 확인하려면 get_office_rules를 조회하세요.',
+    'get_office_rules는 부서와 owner 매칭 규칙을, get_active_runs는 지정한 절대 project_path의 종료되지 않은 run만 조회합니다. hidden 프로젝트도 포함하며 다른 프로젝트를 검색하지 않습니다.',
+    '신규 실행 전 get_active_runs로 같은 프로젝트의 실행을 확인하세요. 새 run의 첫 report에만 active_runs(자신 포함 진행 중 실행)를 반환합니다. 자동 재개·형제 실행 종료는 하지 않습니다. get_run.last_report_at은 저장된 마지막 보고 시각이며 실제 agent 생존 증거가 아닙니다.',
     'report 응답의 checks는 작업 상태 설명을 요청합니다. 확인한 뒤 check_replies:[{check_id,answer}]로 답하세요. 답변은 설명일 뿐 성공 판정이 아닙니다. model/effort가 없으면 host/runtime에서 실제 값을 확인해 같은 task id patch로 보고하고, 확인할 수 없으면 이유를 설명하고 값을 비워 두세요.',
     'retro는 run을 끝내는(완료·중단, finish 자동 종료 포함) report 또는 종료된 run의 report 최상위에 최대 3개 보냅니다. 스킬 지시·도구·프로세스 문제만 적고 코드 결함은 리뷰에 남기세요. 없으면 retro:[]. 다시 보내면 run 단위로 교체됩니다. 빠뜨리면 checks의 task_id __retro__ 요청이 한 번 오며 patch:{}와 retro로 답하세요. 집계는 읽기 전용 get_retros로 조회합니다.',
     'report 응답 open_todos는 이번 patch.tasks의 남은 TODO와 첫 미완료 next입니다. TODO는 실제 진행 순서로 정의하고, 끝날 때마다 바로 done:true로 보고하세요(완료 직전 몰아서 체크 금지). 진행중 task의 상태·note만 바뀌고 15분째 TODO 체크가 없으면 체크인이 옵니다.',
@@ -330,9 +350,12 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   })
 
   const answeredAskSchema = z.object({ ask_id: z.string(), status: z.literal('answered'), answer: z.string() })
+  const activeRunsSchema = z.array(z.object({ run_id: z.string(), title: z.string(), stage: z.string().nullable(), last_report_at: z.string() }))
   const reportOutputSchema = z.object({
     run_id: z.string(), doc_changes: z.array(z.object({ path: z.string(), diff: z.string() })),
     state: z.record(z.string(), z.unknown()).optional(), ended_at: z.string().nullable(), checks: z.array(z.unknown()),
+    placements: z.array(z.object({ task_id: z.string(), owner: z.string().nullable(), department: z.string().nullable(), matched_by: z.enum(['lane', 'owner', 'fallback', 'unassigned']) })),
+    active_runs: activeRunsSchema.optional().describe('새 run 생성 응답에만 포함. 같은 프로젝트의 진행 중 run이며 자신도 포함; 기존 run을 자동 재개하거나 종료하지 않음'),
     asks: z.array(answeredAskSchema).describe('답변된 결재를 반복 전달; ask_id로 중복 처리, 조회는 수신 확인이 아님'),
     open_todos: z.array(z.object({ task_id: z.string(), open: z.number(), next: z.object({ id: z.string(), text: z.string() }) }))
       .describe('이번 patch.tasks에 포함된 task 중 미완료 TODO가 남은 것; next는 목록 순서상 첫 미완료(웹에서 진행 중 표시)'),
@@ -349,9 +372,11 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   const getRunOutputSchema = z.object({
     state: z.record(z.string(), z.unknown()).describe('실행의 전체 진행 상태'),
     run_id: z.string(), project_path: z.string(), stage: z.string().optional(), ended_at: z.string().nullable(),
+    last_report_at: z.string().describe('저장된 마지막 보고 시각; 조회는 이 값을 갱신하지 않음'),
     tasks: z.array(z.unknown()), decisions: z.array(z.unknown()), reviews: z.array(z.unknown()),
     asks: z.array(runAskSchema).describe('pending과 answered 결재; answered는 ask_id로 중복 처리'), checks: z.array(z.unknown()),
     retro: z.object({ submitted_at: z.string().nullable(), items: z.array(z.unknown()) }).describe('제출된 회고; submitted_at null이면 미제출'),
+    placements: z.array(z.object({ task_id: z.string(), owner: z.string().nullable(), department: z.string().nullable(), matched_by: z.enum(['lane', 'owner', 'fallback', 'unassigned']) })),
   })
 
   const getRetrosSchema = z.object({
@@ -413,6 +438,27 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
   app.post('/mcp', async (req, res) => {
     const server = new McpServer({ name: 'office-team-reporter', version: '1.0.0' }, { instructions: usage })
     server.registerTool('report', { description: usage, inputSchema: schema, outputSchema: reportOutputSchema }, async (args) => jsonResult(report(args)))
+    server.registerTool('get_office_rules', {
+      description: 'Read office departments and owner mappings. lane=plan takes precedence over exact and prefix owner matching. Placement data is not proof of browser rendering or physical seat position.',
+      inputSchema: z.object({}).strict(),
+      outputSchema: z.object({
+        departments: z.array(z.unknown()), owners: z.array(z.unknown()), plan_lane_precedence: z.string(),
+      }),
+      annotations: { readOnlyHint: true },
+    }, async () => jsonResult({
+      departments: roles.departments, owners: roles.owners,
+      plan_lane_precedence: 'lane=plan resolves to 회의실 before owner exact or prefix matching.',
+    }))
+    server.registerTool('get_active_runs', {
+      description: 'Read nonended runs for one absolute project path only; hidden projects are included. This does not read documents, mutate state, or enumerate other projects.',
+      inputSchema: z.object({ project_path: z.string().describe('조회할 프로젝트의 절대 경로') }).strict(),
+      outputSchema: z.object({ runs: activeRunsSchema }),
+      annotations: { readOnlyHint: true },
+    }, async ({ project_path }) => {
+      if (!isAbsolute(project_path)) toolError('project_path must be absolute')
+      const path = resolve(project_path)
+      return jsonResult({ runs: activeRuns(path) })
+    })
     server.registerTool('ask', { description: 'Ask the user for a decision; default wait 100 seconds. On pending, wait retry_after_sec then call with the same ask_id. Answered replies remain available through ask, report.asks and get_run.asks; deduplicate by ask_id.', inputSchema: askSchema, outputSchema: askOutputSchema }, async (args, extra) => jsonResult(await askTool(args, extra, res)))
     server.registerTool('get_run', {
       description: 'Read a run with full state, pending and answered asks, and check history without changing state; deduplicate answered asks by ask_id',
@@ -426,8 +472,10 @@ export function createApp({ db, workspaceRoot, now = Date.now, askWaitMs = ASK_W
         checks: db.checks(run.id),
         asks: db.asks(run.id).map(({ created_at: _, ...ask }) => ({ ...ask, ask_id: ask.id })),
         run_id: run.id, project_path: run.project_path, state: run.state, stage: run.state.stage, ended_at: run.ended_at,
+        last_report_at: run.last_report_at,
         tasks: run.state.tasks ?? [], decisions: run.state.decisions ?? [], reviews: run.state.reviews ?? [],
         retro: db.runRetro(run.id),
+        placements: taskPlacements(run.state.tasks ?? []),
       })
     })
     server.registerTool('get_retros', {

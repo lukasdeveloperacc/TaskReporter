@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RunView, Task } from '../../shared/contract.ts'
 import { buildOffice, characterFrame, departmentOf, diffScenes, layoutOffice, rankOf, seatPosition, type Department, type EmployeeView } from './office.ts'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 
 const now = Date.parse('2026-10-19T12:00:00.000Z')
 const makeRun = (patch: Partial<RunView> = {}): RunView => ({
@@ -89,6 +89,26 @@ describe('office roles and employees', () => {
       task({ id: 'STALE', owner: 'frontend-1', status: '진행중', model: 'gpt-5.3-codex' }),
     ] } })
     expect(buildOffice(stale, now).employees.find(({ name }) => name === 'frontend-1')).toMatchObject({ model: 'gpt-5.3-codex', effort: null, state: 'away' })
+  })
+
+  it('selects the latest completed task deterministically without replacing the active task', () => {
+    const completed = [
+      task({ id: 'LATE', owner: 'backend-1', status: '완료', title: '최근 완료', finished: '2026-10-19T11:00:00.000Z' }),
+      task({ id: 'EARLIER', owner: 'backend-1', status: '완료', title: '이전 완료', finished: '2026-10-19T10:00:00.000Z' }),
+      task({ id: 'BAD-B', owner: 'frontend-1', status: '완료', title: '', finished: 'invalid' }),
+      task({ id: 'BAD-A', owner: 'frontend-1', status: '완료', title: '날짜 없음' }),
+      task({ id: 'EMPTY-TITLE', owner: 'document-1', status: '완료', title: '', finished: '2026-10-19T11:00:00.000Z' }),
+      task({ id: 'SAME-B', owner: 'reviewer-lead', status: '완료', title: '동률 B', finished: '2026-10-19T10:00:00.000Z' }),
+      task({ id: 'SAME-A', owner: 'reviewer-lead', status: '완료', title: '동률 A', finished: '2026-10-19T10:00:00.000Z' }),
+      task({ id: 'STOPPED', owner: 'qa-1', status: '중단', title: '중단한 작업', finished: '2026-10-19T11:00:00.000Z' }),
+      task({ id: 'ACTIVE', owner: 'backend-1', status: '진행중', title: '현재 진행' }),
+    ]
+    const employees = buildOffice(makeRun({ state: { tasks: completed } }), now).employees
+    expect(employees.find(({ name }) => name === 'backend-1')).toMatchObject({ task: { id: 'ACTIVE', title: '현재 진행' }, lastCompletedTask: { id: 'LATE', title: '최근 완료' }, state: 'typing' })
+    expect(employees.find(({ name }) => name === 'frontend-1')?.lastCompletedTask).toEqual({ id: 'BAD-A', title: '날짜 없음' })
+    expect(employees.find(({ name }) => name === 'reviewer-lead')?.lastCompletedTask).toEqual({ id: 'SAME-A', title: '동률 A' })
+    expect(employees.find(({ name }) => name === 'document-1')?.lastCompletedTask).toEqual({ id: 'EMPTY-TITLE', title: 'EMPTY-TITLE' })
+    expect(employees.find(({ name }) => name === 'qa-1')?.lastCompletedTask).toBeUndefined()
   })
 })
 

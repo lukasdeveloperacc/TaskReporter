@@ -1,6 +1,6 @@
 # Office Team Reporter
 
-basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다. 터미널이 팀을 지휘하고 앱은 프로젝트별 층, 직원의 작업·검수, 결재 요청, 기획 변경과 업무 일지를 보여줍니다. 웹 UI와 Streamable HTTP MCP(`report`, `ask`, `get_run`, `get_retros`)가 Node 프로세스 하나에서 실행됩니다.
+basic-team 진행을 회사 사무실로 보여주는 로컬 관제실입니다. 터미널이 팀을 지휘하고 앱은 프로젝트별 층, 직원의 작업·검수, 결재 요청, 기획 변경과 업무 일지를 보여줍니다. 웹 UI와 Streamable HTTP MCP(`report`, `ask`, `get_run`, `get_retros`, `get_office_rules`, `get_active_runs`)가 Node 프로세스 하나에서 실행됩니다.
 
 ## 실행과 연결
 
@@ -34,6 +34,22 @@ docker compose logs -f office
 첫 `report`에서 받은 `run_id`를 이후 보고·질문·조회에 재사용합니다. `close_ask_ids`는 `patch` 밖 최상위 인자이며, stage는 계획·구현·리뷰·수정·마무리·완료·중단으로 시작합니다. task는 id, decision은 title, review는 round+reviewer로 병합합니다. owner가 좌석을 정하며 `reviewer-*`는 감사팀, `plan-*`는 회의실에 배치합니다. model은 전체 모델 ID, effort는 host에서 확인한 값만 보내고 모르면 생략합니다.
 
 타입이 있는 strict 스키마로 알 수 없는 필드를 거부하며, `ask.recommended`는 options 안에 있어야 합니다. `report` 응답은 기본적으로 병합된 `state`와 `ended_at`을 포함합니다. 선택 입력 `include_state:false`는 응답의 `state`만 생략하고 나머지 필드를 유지합니다. 미지정 또는 true는 기존 응답을 유지하며 `get_run.state`로 전체 상태를 읽습니다. 스킬은 `report.inputSchema.properties.include_state`의 boolean 지원을 확인한 뒤 사용합니다. 읽기 전용 `get_run({run_id})`으로 해당 실행과 pending·answered 질문을 조회합니다. `report.asks`는 `{ask_id,status:"answered",answer}`를 반복 전달하고 `get_run.asks`는 기존 `id` 등을 유지하면서 `ask_id`를 추가합니다. `ask_id`로 중복 처리하세요. 조회·전송은 수신 확인이 아니며, 보고가 없는 결재 대기 중에는 같은 `ask_id` 재호출을 계속해야 합니다. MCP `tools/list`의 각 도구 `outputSchema`에서 `asks` 및 `retry_after_sec` 지원을 확인할 수 있습니다.
+
+### 실행 전 사무실 탐색과 배정 확인
+
+상태: 로컬 구현·전체 자동 검사·실제 브라우저 확인을 완료했습니다. 결과는 [변경 021](docs/changes/021-office-mcp-discovery.md)과 [스킬 협업 023](docs/changes/023-office-mcp-client-coordination.md)에서 연결합니다. 배포된 서버의 `tools/list`로 지원을 먼저 확인하세요.
+
+새 작업을 만들거나 기존 작업을 재개하기 **전에** 다음 순서로 읽기 전용 탐색을 수행합니다.
+
+1. `get_office_rules({})`로 서버가 사용하는 부서·owner 규칙과 `lane:"plan"`의 회의실 우선 규칙을 확인합니다. 역할 이름을 추측해 새 규칙을 만들지 않습니다.
+2. `get_active_runs({"project_path":"<프로젝트 절대 경로>"})`의 `runs`로 그 프로젝트의 종료되지 않은 실행을 확인합니다. 같은 작업의 기존 실행이면 확인한 `run_id`로 이어가고, 독립 작업이면 `run_id` 없이 새 `report`를 보냅니다. 목록 조회는 자동 재개가 아니며 다른 실행을 종료하지 않습니다.
+3. `report.placements`에서 이번 patch의 task 배정을 확인합니다. 전체 task의 배정과 병합 상태는 `get_run({"run_id":"<확인한 run_id>"})`으로 읽습니다. `include_state:false`여도 placements는 유지됩니다.
+
+placements 항목은 `{task_id,owner,department,matched_by}`이며 matched_by는 `lane`, `owner`, `fallback`, `unassigned`입니다. 모르는 nonempty owner의 `fallback`은 `임시 자리`, owner가 없거나 비어 있으면 `department:null`·`unassigned`입니다. fallback이면 규칙과 실제 담당자 식별자를 다시 확인하고 필요한 owner 수정은 명시적인 task patch로 보고합니다. 서버가 자동으로 owner를 바꾸지 않습니다. 같은 owner의 여러 task는 병합된 전체 상태의 현재 직원 배정을 공유하므로 과거 task의 개별 lane과 department가 다를 수 있습니다. 이 값은 데이터에서 계산한 배정이며 브라우저에 캐릭터가 렌더링되었다는 증거나 픽셀 좌표가 아닙니다.
+
+새 run의 첫 report에는 선택 필드 `active_runs`로 같은 프로젝트의 진행 중 실행 요약을 반환합니다. 자신도 진행 중이면 포함하고 종료한 실행은 제외하며 이후 기존 run 보고에는 생략합니다. 첫 쓰기 전 탐색을 대체하지 않고 자동 재개·형제 실행 종료를 수행하지 않습니다. `get_run.last_report_at`은 저장된 마지막 보고 시각이며 조회로 갱신되지 않습니다. 화면에서 실행 이름·ID로 현재 선택을 구별하며 다른 run의 보고가 선택을 바꾸지 않습니다. 직원 상세의 임시 배정 안내와 `대표 · 나 (사용자)` 표시는 작업자와 사용자 아바타를 구분합니다.
+
+외부 [lukas-plugin basic-team](https://github.com/lukasdeveloperacc/PersonalAgentPlugins)의 클라이언트 연동에도 이 탐색·배정 확인 순서를 적용하도록 권고합니다. 이 저장소의 변경은 외부 스킬 소스나 설치 캐시를 수정하지 않으며, 이미 설치된 스킬이 자동으로 새 계약을 수행한다고 보장하지 않습니다. 구버전 서버에 탐색 도구가 없으면 기존 보고 계약을 사용하고 신규 탐색을 수행했다고 기록하지 않습니다.
 
 ### TODO 진행
 
@@ -119,4 +135,4 @@ npm run build
 
 ## 에셋
 
-픽셀 사무실은 [Kenney Roguelike Indoors](https://kenney.nl/assets/roguelike-indoors), 캐릭터는 [Kenney Roguelike Characters](https://kenney.nl/assets/roguelike-characters)를 사용합니다. 두 팩은 CC0이며 원본 라이선스는 배포 에셋과 함께 보존합니다. 역할·부서·직급은 `web/src/roles.json`에서 관리합니다. 3D·효과음·제품 리플레이·통계·원격 접속은 v1 범위에 포함하지 않습니다.
+픽셀 사무실은 [Kenney Roguelike Indoors](https://kenney.nl/assets/roguelike-indoors), 캐릭터는 [Kenney Roguelike Characters](https://kenney.nl/assets/roguelike-characters)를 사용합니다. 두 팩은 CC0이며 원본 라이선스는 배포 에셋과 함께 보존합니다. 역할·부서·직급은 서버와 웹이 함께 쓰는 `shared/roles.json`에서 관리합니다([변경 021](docs/changes/021-office-mcp-discovery.md)). 3D·효과음·제품 리플레이·통계·원격 접속은 v1 범위에 포함하지 않습니다.

@@ -36,6 +36,20 @@ describe('store', () => {
     expect(db.snapshot(() => true).asks).toEqual([])
   })
 
+  it('lists active runs for one project with deterministic ordering', () => {
+    const latest = db.createRun('/workspace/first', { title: 'Latest' }, 2_000)
+    const tied = db.createRun('/workspace/first', { title: 'Tied' }, 2_000)
+    const older = db.createRun('/workspace/first', { title: 'Older' }, 1_000)
+    db.upsertProject('/workspace/other', true, 3_000)
+    const other = db.createRun('/workspace/other', { title: 'Other' }, 3_000)
+    const ended = db.createRun('/workspace/first', { title: 'Ended' }, 4_000)
+    ended.ended_at = new Date(4_000).toISOString()
+    db.saveRun(ended)
+    expect(db.listActiveRunsForProject('/workspace/first').map(({ id }) => id)).toEqual([[latest.id, tied.id].sort(), older.id].flat())
+    expect(db.listActiveRunsForProject('/workspace/other').map(({ id }) => id)).toEqual([other.id])
+    expect(db.listActiveRunsForProject('/workspace/missing')).toEqual([])
+  })
+
   it('adds hidden to a legacy database and preserves visibility across reopen and upsert', () => {
     db.close()
     const file = join(dir, 'legacy.db')

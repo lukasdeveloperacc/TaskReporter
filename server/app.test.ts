@@ -7,7 +7,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.ts'
 import { openStore } from './store.ts'
-import { ASK_WAIT_MS, type ProgressData } from '../shared/contract.ts'
+import { ASK_WAIT_MS, type ProgressData, type RunView } from '../shared/contract.ts'
+import { buildOffice } from '../web/src/office.ts'
 
 const fixture = readFileSync(new URL('./fixtures/progress-example.md', import.meta.url), 'utf8')
 const golden = JSON.parse(readFileSync(new URL('./fixtures/progress-example.expected.json', import.meta.url), 'utf8')) as ProgressData
@@ -432,6 +433,137 @@ describe('office app', () => {
     await client.close()
   })
 
+  it('publishes read-only owner rules and project-scoped active-run discovery', async () => {
+    let clock = Date.parse('2026-10-01T00:00:00.000Z')
+    const projectPath = join(workspace, 'project')
+    const { client } = await start({ now: () => clock })
+    const { tools } = await client.listTools()
+    const rulesTool = tools.find((tool) => tool.name === 'get_office_rules')!
+    const activeTool = tools.find((tool) => tool.name === 'get_active_runs')!
+    expect(rulesTool.annotations?.readOnlyHint).toBe(true)
+    expect(rulesTool.inputSchema.additionalProperties).toBe(false)
+    expect(rulesTool.inputSchema.properties).toEqual({})
+    expect(activeTool.annotations?.readOnlyHint).toBe(true)
+    expect(activeTool.inputSchema.additionalProperties).toBe(false)
+    expect(activeTool.inputSchema.required).toEqual(['project_path'])
+    const rules = parseTool(await client.callTool({ name: 'get_office_rules', arguments: {} }))!
+    expect(rules.departments).toEqual(expect.arrayContaining([expect.objectContaining({ key: '회의실' })]))
+    expect(rules.owners).toEqual(expect.arrayContaining([expect.objectContaining({ match: 'plan-*' })]))
+    expect(rules.plan_lane_precedence).toContain('plan')
+    expect((await client.callTool({ name: 'get_office_rules', arguments: { extra: true } })).isError).toBe(true)
+
+    const first = parseTool(await report(client, '', { project_path: projectPath, patch: { title: 'First', stage: '구현' } }))!
+    const firstId = String(first.run_id)
+    clock += 1_000
+    const second = parseTool(await report(client, '', { project_path: projectPath, patch: { title: 'Second', stage: '리뷰' } }))!
+    const secondId = String(second.run_id)
+    const hiddenPath = join(workspace, 'hidden')
+    const hidden = parseTool(await report(client, '', { project_path: hiddenPath, patch: { title: 'Hidden' } }))!
+    db.setProjectHidden(hiddenPath, true)
+    const endedPath = join(workspace, 'ended')
+    const ended = parseTool(await report(client, '', { project_path: endedPath, patch: { stage: '완료' } }))!
+    const firstRun = db.getRun(firstId)!
+    firstRun.last_report_at = new Date(clock).toISOString()
+    db.saveRun(firstRun)
+    const secondRun = db.getRun(secondId)!
+    secondRun.last_report_at = firstRun.last_report_at
+    db.saveRun(secondRun)
+    const before = db.snapshot(() => false)
+    const found = parseTool(await client.callTool({ name: 'get_active_runs', arguments: { project_path: `${workspace}/x/../project` } }))!
+    const tiedRuns = [
+      { run_id: firstId, title: 'First', stage: '구현', last_report_at: firstRun.last_report_at },
+      { run_id: secondId, title: 'Second', stage: '리뷰', last_report_at: firstRun.last_report_at },
+    ].sort((a, b) => a.run_id < b.run_id ? -1 : a.run_id > b.run_id ? 1 : 0)
+    expect(found.runs).toEqual(tiedRuns)
+    expect(parseTool(await client.callTool({ name: 'get_active_runs', arguments: { project_path: hiddenPath } }))!.runs).toEqual([
+      expect.objectContaining({ run_id: hidden.run_id, title: 'Hidden' }),
+    ])
+    expect(parseTool(await client.callTool({ name: 'get_active_runs', arguments: { project_path: join(workspace, 'missing') } }))!.runs).toEqual([])
+    expect((await client.callTool({ name: 'get_active_runs', arguments: { project_path: 'relative/path' } })).isError).toBe(true)
+    expect((await client.callTool({ name: 'get_active_runs', arguments: { project_path: projectPath, extra: true } })).isError).toBe(true)
+    expect(ended.run_id).toBeTruthy()
+    expect(parseTool(await client.callTool({ name: 'get_active_runs', arguments: { project_path: endedPath } }))!.runs).toEqual([])
+    expect(db.snapshot(() => false)).toEqual(before)
+    await client.close()
+  })
+
+  it('identifies parallel runs on creation without overwriting siblings or changing read timestamps', async () => {
+    let clock = Date.parse('2026-10-24T00:00:00Z')
+    const { client } = await start({ now: () => clock })
+    const projectPath = join(workspace, 'project')
+    await report(client, '', { project_path: join(workspace, 'other'), patch: { title: 'Other' } })
+    const ended = parseTool(await report(client, '', { patch: { title: 'Ended', stage: '완료' }, retro: [] }))!
+    expect(ended.active_runs).toEqual([])
+    const first = parseTool(await report(client, '', { include_state: false, patch: { title: 'Same title', summary: 'First work' } }))!
+    const firstId = String(first.run_id)
+    expect(first.active_runs).toEqual([{ run_id: firstId, title: 'Same title', stage: '계획', last_report_at: new Date(clock).toISOString() }])
+    const preserved = structuredClone(db.getRun(firstId))
+    clock += 1_000
+    const second = parseTool(await report(client, '', { include_state: false, patch: { title: 'Same title', summary: 'Second work' } }))!
+    const secondId = String(second.run_id)
+    expect(secondId).not.toBe(firstId)
+    expect(second.active_runs).toEqual([
+      { run_id: secondId, title: 'Same title', stage: '계획', last_report_at: new Date(clock).toISOString() },
+      { run_id: firstId, title: 'Same title', stage: '계획', last_report_at: preserved!.last_report_at },
+    ])
+    expect(db.getRun(firstId)).toEqual(preserved)
+    clock += 1_000
+    const resumed = parseTool(await report(client, '', { project_path: projectPath, run_id: firstId, patch: { summary: 'First continues' } }))!
+    expect(resumed).not.toHaveProperty('active_runs')
+    const beforeRead = db.snapshot(() => false)
+    const read = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: firstId } }))!
+    expect(read.last_report_at).toBe(new Date(clock).toISOString())
+    expect(db.getRun(secondId)!.state.summary).toBe('Second work')
+    expect(db.snapshot(() => false)).toEqual(beforeRead)
+    expect((await report(client, '', { project_path: join(workspace, 'other'), run_id: firstId })).isError).toBe(true)
+    await client.close()
+  })
+
+  it('projects merged tasks through shared actor assignment in report and get_run', async () => {
+    const { client } = await start()
+    const first = parseTool(await report(client, '', { include_state: false, patch: { tasks: [
+      { id: 'PLAN', owner: 'backend-1', lane: 'plan', status: '완료' },
+      { id: 'BUILD', owner: 'backend-1', lane: 'build', status: '진행중' },
+      { id: 'UNKNOWN', owner: 'someone-new', status: '대기중' },
+      { id: 'UNASSIGNED', status: '대기중' },
+      { id: 'PLAN_ONLY', owner: 'plan-actor', lane: 'plan', status: '진행중' },
+      { id: 'EMPTY_PLAN', owner: '', lane: 'plan', status: '진행중' },
+    ] } }))!
+    const runId = String(first.run_id)
+    expect(first).not.toHaveProperty('state')
+    expect(first.placements).toEqual([
+      { task_id: 'PLAN', owner: 'backend-1', department: '백엔드팀', matched_by: 'owner' },
+      { task_id: 'BUILD', owner: 'backend-1', department: '백엔드팀', matched_by: 'owner' },
+      { task_id: 'UNKNOWN', owner: 'someone-new', department: '임시 자리', matched_by: 'fallback' },
+      { task_id: 'UNASSIGNED', owner: null, department: null, matched_by: 'unassigned' },
+      { task_id: 'PLAN_ONLY', owner: 'plan-actor', department: '회의실', matched_by: 'lane' },
+      { task_id: 'EMPTY_PLAN', owner: null, department: null, matched_by: 'unassigned' },
+    ])
+    const changed = parseTool(await report(client, '', { run_id: runId, include_state: false, patch: {
+      tasks: [{ id: 'PLAN', lane: 'review', owner: 'frontend-1' }],
+    } }))!
+    expect(changed.placements).toEqual([
+      { task_id: 'PLAN', owner: 'frontend-1', department: '프론트엔드팀', matched_by: 'owner' },
+    ])
+    const before = db.snapshot(() => false)
+    const read = parseTool(await client.callTool({ name: 'get_run', arguments: { run_id: runId } }))!
+    expect(read.placements).toEqual([
+      { task_id: 'PLAN', owner: 'frontend-1', department: '프론트엔드팀', matched_by: 'owner' },
+      { task_id: 'BUILD', owner: 'backend-1', department: '백엔드팀', matched_by: 'owner' },
+      { task_id: 'UNKNOWN', owner: 'someone-new', department: '임시 자리', matched_by: 'fallback' },
+      { task_id: 'UNASSIGNED', owner: null, department: null, matched_by: 'unassigned' },
+      { task_id: 'PLAN_ONLY', owner: 'plan-actor', department: '회의실', matched_by: 'lane' },
+      { task_id: 'EMPTY_PLAN', owner: null, department: null, matched_by: 'unassigned' },
+    ])
+    const view: RunView = { id: runId, project_path: join(workspace, 'project'), title: 'project', doc_path: null, doc_accessible: false, state: read.state as ProgressData, last_report_at: new Date(1_800_000_000_000).toISOString(), ended_at: null }
+    const employees = new Map(buildOffice(view, 1_800_000_000_000).employees.map((employee) => [employee.name, employee]))
+    for (const placement of read.placements as { owner: string | null; department: string | null }[]) {
+      if (placement.owner) expect(employees.get(placement.owner)?.department).toBe(placement.department)
+    }
+    expect(db.snapshot(() => false)).toEqual(before)
+    await client.close()
+  })
+
   it('omits only report state on opt-in and returns the full state through get_run', async () => {
     const { base, client } = await start()
     const tools = (await client.listTools()).tools
@@ -442,12 +574,13 @@ describe('office app', () => {
     const first = parseTool(await report(client, base, { include_state: false, patch: { stage: '구현', summary: 'Full summary', todo: 'Next', blockers: 'None', tasks: [{ id: 'T', status: '진행중' }] } }))!
     const runId = String(first.run_id)
     expect(first).not.toHaveProperty('state')
-    expect(Object.keys(first).sort()).toEqual(['run_id', 'ended_at', 'doc_changes', 'checks', 'asks', 'open_todos'].sort())
+    expect(Object.keys(first).sort()).toEqual(['run_id', 'ended_at', 'doc_changes', 'checks', 'asks', 'open_todos', 'placements', 'active_runs'].sort())
     const askId = db.createAsk(runId, 'Continue?', ['Yes'], undefined, 0)
     db.answerAsk(askId, 'Yes')
     const compactResponse = await report(client, base, { run_id: runId, include_state: false, patch: {} })
     const compact = parseTool(compactResponse)!
     expect(compact).not.toHaveProperty('state')
+    expect(compact).not.toHaveProperty('active_runs')
     expect(compactResponse.structuredContent).not.toHaveProperty('state')
     expect(compact.asks).toEqual([{ ask_id: askId, status: 'answered', answer: 'Yes' }])
     expect(compact.checks).toEqual(first.checks)

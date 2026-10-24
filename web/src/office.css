@@ -266,7 +266,11 @@
 .office-employee--typing .office-person { animation: office-type 500ms steps(2, end) infinite alternate; }
 .office-employee--away { opacity: .68; }
 .office-employee--away .office-person { filter: saturate(.4); }
-.office-employee--gone { display: none; }
+.office-employee--gone { cursor: pointer; }
+.office-scene--off .office-employee { transition: none; }
+.office-scene--off .office-employee--typing .office-person,
+.office-scene--off .office-representative--walking .office-person { animation: none; }
+.office-employee--gone .office-person { animation: none; }
 .office-bubble {
   position: absolute;
   z-index: 7;
@@ -304,6 +308,7 @@
   white-space: nowrap;
 }
 .office-bubble small { color: #375b55; font-size: 11px; }
+.office-completed-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .office-plant {
   position: absolute;
   right: 18px;

@@ -27,6 +27,14 @@ Node 24 프로세스 하나가 Express 5, MCP SDK의 Streamable HTTP, SQLite와 
 
 MCP와 API는 localhost Host와 허용된 HTTP origin을 검사한다. Compose 공개 포트는 `127.0.0.1:4780:4780`이다. 워크스페이스를 같은 절대 경로에 읽기 전용으로 연결하며 DB만 `/data` named volume에 쓴다. 앱은 에이전트·터미널·에디터를 실행하지 않는다.
 
+## 사무실 탐색과 공용 배정 확장
+
+상태: 로컬 구현과 전체 자동 검사를 완료했다. 독립 리뷰·실제 브라우저 검증 결과는 [변경 021](changes/021-office-mcp-discovery.md)에서 연결한다. 기존 역할 레지스트리를 내용 변경 없이 `shared/roles.json`으로 이동했으며 `shared/office-roles.ts`에서 owner 해석과 task별 직원 배정을 공유한다. 웹의 `buildOffice`와 MCP placements가 같은 배정 함수를 사용한다. 현재 진행 task 선택은 기존 입력 순서의 마지막 진행중 task를 유지하며, 별도의 최근 완료 task는 유효한 finished 내림차순·동률 task ID 오름차순으로 선택한다. 진행 task가 없는 직원의 부서는 최근 완료 task의 lane을 우선 사용한다. 모델·effort fallback과 DB 스키마는 유지한다.
+
+MCP의 `get_office_rules({})`는 공용 레지스트리의 부서·owner 규칙과 plan lane 우선 규칙을, `get_active_runs({project_path})`는 정규화된 절대 프로젝트 경로에 속한 비종료 run 요약을 읽기 전용으로 제공한다. unknown 프로젝트는 빈 목록이며 숨긴 층도 접근 제어로 필터링하지 않는다. 정렬은 last_report_at 내림차순·동률 run_id 오름차순이다. 조회는 실행·문서 상태를 바꾸거나 다른 프로젝트의 전역 snapshot을 반환하지 않는다.
+
+`report.placements`는 병합 후 이번 patch에 포함된 task ID를, `get_run.placements`는 모든 task를 반환한다. 항목은 `{task_id,owner,department,matched_by}`이며 `include_state:false`도 이 배열을 유지한다. owner 없는 task는 null 부서·unassigned, 규칙에 없는 owner는 임시 자리·fallback으로 구분한다. 배정은 전체 task를 통한 직원의 유효 lane 기준이며 렌더링 확인이나 좌표 계약이 아니다. 상세 입력·응답 의미는 [보고 요구사항](requirements/progress-office.md#사무실-탐색과-배정-확인), 클라이언트 적용 권고는 [연동 요구사항](requirements/decisions-integration.md#신규재개-전-탐색-연동)을 따른다.
+
 ## 환경변수
 
 | 이름 | 용도·기본값 |

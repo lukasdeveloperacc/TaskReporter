@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AskView, RunView, Task } from '../../shared/contract.ts'
 import { Office } from './Office.tsx'
 import { buildOffice, departmentOf, seatPosition } from './office.ts'
-import roles from './roles.json' with { type: 'json' }
+import { roles } from '../../shared/office-roles.ts'
 import { ELEVATOR_RECT, moveVisitor, roomGeometry, VISITOR_SPAWN, type Direction, type Point } from './visitor.ts'
 import { moveWithinArea, nearestDoor, roomKeyAt } from './roomNavigation.ts'
 
@@ -251,7 +251,10 @@ describe('real Office visitor staff inspection', () => {
 
     const ended = makeRun([activeBackendTask({ title: '끝난 run의 이전 작업', lane: 'plan' })], { ended_at: stamp })
     rerender(<OfficeHarness run={ended} />)
-    expect((await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })).textContent).toContain('직원을 찾을 수 없습니다')
+    const endedInspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
+    expect(endedInspector.textContent).toContain('backend-1 업무')
+    expect(endedInspector.textContent).toContain('끝난 run의 이전 작업')
+    expect(endedInspector.textContent).toContain('상태 · 업무 종료')
   })
 
   it('keeps completed assigned work and missing metadata visible for an inspectable idle employee', async () => {
@@ -343,9 +346,13 @@ describe('real Office visitor staff inspection', () => {
     const latest = disposition === 'removed' ? makeRun([], { id: run.id }) : { ...run, ended_at: stamp }
     rerender(<OfficeHarness run={latest} />)
     const unavailable = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
-    expect(unavailable.textContent).toContain('직원을 찾을 수 없습니다')
+    if (disposition === 'removed') expect(unavailable.textContent).toContain('직원을 찾을 수 없습니다')
+    else {
+      expect(unavailable.textContent).toContain('backend-1 업무')
+      expect(unavailable.textContent).toContain('상태 · 업무 종료')
+    }
     const close = within(unavailable).getByRole('button', { name: '닫기' })
-    await waitFor(() => expect(document.activeElement).toBe(close))
+    await waitFor(() => expect(document.activeElement).toBe(disposition === 'removed' ? close : currentTab))
     fireEvent.keyDown(close, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
     expect(screen.getByRole('dialog', { name: '직원 살펴보기 사무실' })).toBeTruthy()
@@ -429,7 +436,7 @@ describe('clicking staff to inspect work', () => {
     if (mode.startsWith('paused')) expect((screen.getByRole('button', { name: '위로 이동' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('blocks staff clicks during an external dialog and after the run ends', () => {
+  it('blocks staff clicks during an external dialog but keeps ended staff inspectable', async () => {
     const run = makeRun([activeBackendTask()])
     const props = { run, asks: [], now, onOpenAsk: () => {} }
     const { rerender } = render(<Office {...props} visitorEnabled={false} interactionBlocked />)
@@ -438,9 +445,9 @@ describe('clicking staff to inspect work', () => {
     fireEvent.click(employee)
     expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
     rerender(<Office {...props} run={{ ...run, ended_at: stamp }} visitorEnabled={false} />)
-    expect(employee.disabled).toBe(true)
+    expect(employee.disabled).toBe(false)
     fireEvent.click(employee)
-    expect(screen.queryByRole('dialog', { name: '직원 업무 살펴보기' })).toBeNull()
+    expect((await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })).textContent).toContain('상태 · 업무 종료')
   })
 })
 
@@ -535,6 +542,23 @@ describe('walking to clicked staff', () => {
     } finally {
       ELEVATOR_RECT.x = originalX
     }
+  })
+
+  it('lets keyboard visitors inspect a gone employee without restoring its scene animation', async () => {
+    const run = makeRun([activeBackendTask({ title: '종료한 직원의 기록' })], { ended_at: stamp })
+    render(<OfficeHarness run={run} />)
+    fireEvent.click(screen.getByRole('button', { name: '직접 둘러보기' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }))
+    const map = screen.getByRole('region', { name: '직원 살펴보기 사무실 바닥' })
+    const employee = screen.getByRole('button', { name: 'backend-1 현재 업무 보기' })
+    expect(employee.getAttribute('data-state')).toBe('gone')
+    expect((employee as HTMLButtonElement).disabled).toBe(false)
+    moveAlong(map, findRoute(VISITOR_SPAWN, employeePoint(run, 'backend-1'), true))
+    await waitFor(() => expect(characterFoot()).toEqual(employeePoint(run, 'backend-1')))
+    fireEvent.keyDown(map, { key: 'e', code: 'KeyE' })
+    const inspector = await screen.findByRole('dialog', { name: '직원 업무 살펴보기' })
+    expect(inspector.textContent).toContain('종료한 직원의 기록')
+    expect(inspector.textContent).toContain('상태 · 업무 종료')
   })
 
   it.each(['blocked', 'removed', 'ended', 'changed run'] as const)('cancels arrival when %s', (reason) => {

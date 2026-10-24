@@ -136,11 +136,12 @@ export default function App() {
       <main className="floor-page">
         <header className="floor-heading">
           <div><button className="back-link" type="button" onClick={() => { window.location.hash = '#/' }}>← 빌딩 로비</button><h1>{activeProject.name}</h1><p>{activeProject.path}</p></div>
-          {!selectedRun.ended_at && activeRuns.length > 1 && <label className="run-picker">진행 중 run<select aria-label="진행 중 run" value={selectedRun.id} onChange={(event) => selectRun(event.target.value)}>{activeRuns.map((run) => <option value={run.id} key={run.id}>{run.title || run.state.title || run.id}</option>)}</select></label>}
+          {!selectedRun.ended_at && activeRuns.length > 1 && <label className="run-picker">진행 중 실행 {activeRuns.length}개<select aria-label="진행 중 run" value={selectedRun.id} onChange={(event) => selectRun(event.target.value)}>{activeRuns.map((run) => <option value={run.id} key={run.id}>{run.title || run.state.title || '제목 미보고'} · {run.id}</option>)}</select></label>}
         </header>
         <section className="run-summary" aria-label="run 진행 요약">
           <div><span className="status-light" data-status={selectedRun.ended_at ? 'off' : 'on'} /><strong>{selectedRun.state.stage || '계획'}</strong><small>{selectedRun.ended_at ? '업무 종료' : '팀 근무 중'}</small></div>
           <div className="run-notes">
+            <p><strong>선택한 실행</strong><span>{selectedRun.title || selectedRun.state.title || '제목 미보고'} · {selectedRun.id}</span></p>
             <p className="run-notes__summary">{selectedRun.state.summary || '아직 요약이 없습니다. 팀의 다음 보고를 기다리는 중입니다.'}</p>
             <p><strong>사용자 할 일</strong><span>{selectedRun.state.todo?.trim() || '없음'}</span></p>
             <p><strong>막힌 사항</strong><span>{selectedRun.state.blockers?.trim() || '없음'}</span></p>

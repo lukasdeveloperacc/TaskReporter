@@ -142,7 +142,9 @@ export type ReportArgs = {
 }
 
 export type OpenTodos = { task_id: string; open: number; next: { id: string; text: string } }
-export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[]; open_todos: OpenTodos[] }
+export type TaskPlacement = { task_id: string; owner: string | null; department: string | null; matched_by: 'lane' | 'owner' | 'fallback' | 'unassigned' }
+export type ActiveRunSummary = { run_id: string; title: string; stage: string | null; last_report_at: string }
+export type ReportResult = { run_id: string; doc_changes: DocChange[]; state?: ProgressData; ended_at: string | null; checks: CheckView[]; asks: AnsweredAsk[]; open_todos: OpenTodos[]; placements: TaskPlacement[]; active_runs?: ActiveRunSummary[] }
 
 export type AskArgs = {
   run_id: string

@@ -10,6 +10,18 @@ const makeRun = (id: string, title: string, tasks: Task[], patch: Partial<RunVie
 })
 
 describe('EmployeeReport', () => {
+  it.each([
+    ['review-e2e', 'review', true],
+    ['E2E Agent', 'review', false],
+    ['unknown-planner', 'plan', false],
+  ] as const)('explains placement for %s without inferring runtime liveness', (owner, lane, fallback) => {
+    const run = makeRun('current', '현재 실행', [{ id: 'task', owner, lane, status: '완료' }])
+    render(<EmployeeReport owner={owner} runs={[run]} currentRunId="current" tab="current" onTabChange={() => {}} now={0} />)
+    expect(Boolean(screen.queryByText(/에 맞는 부서 규칙이 없습니다/))).toBe(fallback)
+    expect(screen.getByText(/실행 ID · current · 마지막 보고/)).toBeTruthy()
+    expect(screen.getByText('작업 상태는 마지막 보고 기준입니다. 실제 에이전트의 실행 여부와 다를 수 있습니다.')).toBeTruthy()
+  })
+
   it('shows assigned work from planning through completion with reported fields and honest missing values', () => {
     const run = makeRun('current', '현재 실행', [
       { id: 'one', owner: 'staff-a', title: '진행 작업', status: '진행중', model: 'codex', effort: 'high', started: '2026-10-20T10:00:00Z' },
